@@ -25,6 +25,7 @@ pub struct ZjuAssist {
     username: String,
     password: String,
     proxy_first: bool,
+    custom_proxy: Option<String>,
 }
 
 pub struct ZjuRequestBuilder {
@@ -70,11 +71,16 @@ impl ZjuRequestBuilder {
                 .unwrap(),
         );
 
-        let client_default = Client::builder()
+        let mut client_default_builder = Client::builder()
             .cookie_provider(Arc::clone(&client.jar))
-            .default_headers(headers.clone())
-            .build()
-            .unwrap();
+            .default_headers(headers.clone());
+
+        if let Some(proxy_url) = client.custom_proxy.as_deref() {
+            let proxy = reqwest::Proxy::all(proxy_url).unwrap();
+            client_default_builder = client_default_builder.proxy(proxy);
+        }
+
+        let client_default = client_default_builder.build().unwrap();
 
         let client_no_proxy = Client::builder()
             .cookie_provider(Arc::clone(&client.jar))
@@ -150,7 +156,21 @@ impl ZjuAssist {
             username: "".to_string(),
             password: "".to_string(),
             proxy_first: true,
+            custom_proxy: None,
         }
+    }
+
+    pub fn set_custom_proxy(&mut self, proxy_url: Option<String>) -> Result<()> {
+        if let Some(url) = proxy_url.as_deref() {
+            reqwest::Proxy::all(url)
+                .map_err(|err| anyhow!("Invalid proxy url '{}': {}", url, err))?;
+        }
+        self.custom_proxy = proxy_url;
+        Ok(())
+    }
+
+    pub fn get_custom_proxy(&self) -> Option<String> {
+        self.custom_proxy.clone()
     }
 
     pub fn request<U: IntoUrl + Clone>(&self, method: Method, url: U) -> ZjuRequestBuilder {
@@ -173,15 +193,17 @@ impl ZjuAssist {
 
     pub async fn test_connection(&mut self) -> Result<()> {
         let headers = HeaderMap::new();
-        let client_default = Client::builder()
-            .default_headers(headers.clone())
-            .build()
-            .unwrap();
+        let mut client_default_builder = Client::builder().default_headers(headers.clone());
+        if let Some(proxy_url) = self.custom_proxy.as_deref() {
+            let proxy = reqwest::Proxy::all(proxy_url)
+                .map_err(|err| anyhow!("Invalid proxy url '{}': {}", proxy_url, err))?;
+            client_default_builder = client_default_builder.proxy(proxy);
+        }
+        let client_default = client_default_builder.build()?;
         let client_no_proxy = Client::builder()
             .default_headers(headers)
             .no_proxy()
-            .build()
-            .unwrap();
+            .build()?;
 
         tokio::pin! {
             let latency_default = measure_latency(client_default, "http://zdbk.zju.edu.cn/");

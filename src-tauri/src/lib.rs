@@ -1,7 +1,8 @@
 mod controller;
-mod model;
-mod utils;
-mod zju_assist;
+pub mod logic;
+pub mod model;
+pub mod utils;
+pub mod zju_assist;
 
 use dashmap::DashMap;
 use log::info;
