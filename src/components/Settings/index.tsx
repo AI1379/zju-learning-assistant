@@ -28,6 +28,11 @@ export default function Settings({
   const { config, updateConfigField, updateConfigBatch } = useConfig();
   const { notification } = App.useApp();
   const [dingUrlInput, setDingUrlInput] = useState('');
+  const [smtpHostInput, setSmtpHostInput] = useState('');
+  const [smtpPortInput, setSmtpPortInput] = useState<number>(465);
+  const [smtpUsernameInput, setSmtpUsernameInput] = useState('');
+  const [smtpPasswordInput, setSmtpPasswordInput] = useState('');
+  const [mailRecipientInput, setMailRecipientInput] = useState('');
   const [subtitleModalOpen, setSubtitleModalOpen] = useState(false);
   const [llmModalOpen, setLlmModalOpen] = useState(false);
   const [isEnablingLlm, setIsEnablingLlm] = useState(false);
@@ -36,6 +41,11 @@ export default function Settings({
   useEffect(() => {
     if (open && config) {
       setDingUrlInput(config.ding_url || '');
+      setSmtpHostInput(config.smtp_host || '');
+      setSmtpPortInput(config.smtp_port || 465);
+      setSmtpUsernameInput(config.smtp_username || '');
+      setSmtpPasswordInput(config.smtp_password || '');
+      setMailRecipientInput(config.mail_recipient || '');
     }
   }, [open, config]);
 
@@ -76,6 +86,39 @@ export default function Settings({
     updateConfigField('ding_url', dingUrlInput);
     notification.success({ message: '钉钉 Webhook 已保存' });
   }
+
+  const handleTestEmail = () => {
+    invoke('test_email_config', {
+      smtpHost: smtpHostInput,
+      smtpPort: smtpPortInput,
+      smtpUsername: smtpUsernameInput,
+      smtpPassword: smtpPasswordInput,
+      mailRecipient: mailRecipientInput
+    }).then(() => {
+      notification.success({ message: '测试邮件发送成功' });
+    }).catch((err) => {
+      notification.error({ message: '测试邮件发送失败', description: String(err) });
+    });
+  };
+
+  const handleSaveAndEnableMail = () => {
+    updateConfigBatch({
+      smtp_host: smtpHostInput,
+      smtp_port: smtpPortInput,
+      smtp_username: smtpUsernameInput,
+      smtp_password: smtpPasswordInput,
+      mail_recipient: mailRecipientInput,
+      mail_notifications: true,
+    }).then(() => {
+      notification.success({ message: '邮件通知配置已保存并启用' });
+    });
+  };
+
+  const handleDisableMail = () => {
+    updateConfigField('mail_notifications', false).then(() => {
+      notification.success({ message: '邮件通知已关闭' });
+    });
+  };
 
   const handleLlmSwitchChange = (checked: boolean) => {
     if (checked) {
@@ -211,6 +254,58 @@ export default function Settings({
                 </div>
               }
             />
+          </List.Item>
+
+          <List.Item>
+            <List.Item.Meta
+              title={<Text style={{ fontWeight: 'normal' }}>邮件通知（TODO）</Text>}
+              description={
+                <div>
+                  <Text type="secondary" style={{ fontWeight: 'normal', fontSize: 12 }}>
+                    配置 SMTP 后可用于发送 TODO 汇总邮件。
+                  </Text>
+                  <div style={{ marginTop: 10 }}>
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      <Space.Compact style={{ width: '100%' }}>
+                        <Input
+                          placeholder='SMTP Host'
+                          value={smtpHostInput}
+                          onChange={(e) => setSmtpHostInput(e.target.value)}
+                        />
+                        <InputNumber
+                          placeholder='Port'
+                          value={smtpPortInput}
+                          onChange={(value) => setSmtpPortInput(Number(value || 465))}
+                        />
+                      </Space.Compact>
+                      <Input
+                        placeholder='SMTP Username'
+                        value={smtpUsernameInput}
+                        onChange={(e) => setSmtpUsernameInput(e.target.value)}
+                      />
+                      <Tooltip title={<span>对于 Gmail、Outlook 等邮箱，请使用应用专用密码（App Password）。</span>}>
+                        <Input.Password
+                          placeholder='SMTP Password'
+                          value={smtpPasswordInput}
+                          onChange={(e) => setSmtpPasswordInput(e.target.value)}
+                        />
+                      </Tooltip>
+                      <Input
+                        placeholder='Receiver Email'
+                        value={mailRecipientInput}
+                        onChange={(e) => setMailRecipientInput(e.target.value)}
+                      />
+                      <Space>
+                        <Button onClick={handleTestEmail}>测试</Button>
+                        <Button type="primary" onClick={handleSaveAndEnableMail}>保存并启用</Button>
+                        <Button danger onClick={handleDisableMail}>关闭</Button>
+                      </Space>
+                    </Space>
+                  </div>
+                </div>
+              }
+            />
+            <Switch checked={config.mail_notifications} onChange={(checked) => updateConfigField('mail_notifications', checked)} />
           </List.Item>
 
           <List.Item>
