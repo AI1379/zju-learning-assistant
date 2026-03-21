@@ -35,6 +35,12 @@ export class Config {
     tray: boolean
     max_concurrent_tasks: number
     auto_start: boolean
+    mail_notifications: boolean
+    smtp_host: string
+    smtp_port: number
+    smtp_username: string
+    smtp_password: string
+    mail_recipient: string
     download_subtitle: boolean
     subtitle_language: string[]
     subtitle_format: string

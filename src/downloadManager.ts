@@ -64,7 +64,7 @@ export class Task {
         let avgSpeed = this.downloadedSize / (this.lastUpdateTime - this.startTime)
         this.remainingTime = (this.totalSize - this.downloadedSize) / avgSpeed / 1000
         this.downloadedSize = progress.downloaded_size
-        this.progress = this.downloadedSize / this.totalSize
+        this.progress = this.totalSize === 0 ? 0 : this.downloadedSize / this.totalSize
     }
 
     public async cancel(): Promise<any> {
@@ -150,14 +150,14 @@ export class ClassroomTask extends Task {
     subject: Subject
     toPdf: boolean
 
-    constructor(subject: Subject, toPdf: boolean = true) {
+    constructor(subject: Subject, toPdf: boolean = true, onlySubtitle: boolean = false) {
         super()
-        this.id = `${subject.course_id}-${subject.sub_id}-${subject.path}`
-        this.name = `${subject.course_name}-${subject.sub_name}`
+        this.id = `${subject.course_id}-${subject.sub_id}-${subject.path}${onlySubtitle ? '-asr' : ''}`
+        this.name = `${subject.course_name}-${subject.sub_name}` + (onlySubtitle ? ' (ASR)' : '')
         this.path = subject.path
-        this.subject = subject
+        this.subject = onlySubtitle ? { ...subject, ppt_image_urls: [] } : subject
         this.toPdf = toPdf
-        this.totalSize = subject.ppt_image_urls.length
+        this.totalSize = onlySubtitle ? 0 : subject.ppt_image_urls.length
     }
 
     async start(): Promise<any> {

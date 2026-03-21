@@ -47,6 +47,12 @@ tauri-plugin-notification = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-log = "2.2.1"
 tauri-plugin-os = "2"
+lettre = { version = "0.11.19", default-features = false, features = [
+	"tokio1",
+	"builder",
+	"smtp-transport",
+	"tokio1-rustls-tls",
+] }
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))'.dependencies]
 security-framework = "=2.10.0"

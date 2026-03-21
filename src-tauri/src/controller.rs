@@ -1,5 +1,5 @@
 use crate::model::{Config, Progress, Subject, Upload, VersionInfo};
-use crate::utils::{export_todo_ics, format_srt_timestamp, images_to_pdf, save_subtitle};
+use crate::utils::{export_todo_ics, format_srt_timestamp, images_to_pdf, save_subtitle, send_email};
 use crate::zju_assist::{SubtitleContent, ZjuAssist};
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
@@ -583,6 +583,70 @@ pub fn export_todo(
             .unwrap();
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn mail_todo(
+    todo_list: Vec<Value>,
+    smtp_host: String,
+    smtp_port: u16,
+    smtp_username: String,
+    smtp_password: String,
+    mail_recipient: String,
+) -> Result<(), String> {
+    info!("mail_todo to {}", mail_recipient);
+
+    let subject = "ZJU Learning Assistant - TODO 通知";
+    let mut body = String::new();
+    for todo in todo_list.iter() {
+        let course_name = todo["course_name"].as_str().unwrap_or("Unknown");
+        let title = todo["title"].as_str().unwrap_or("Unknown");
+        let end_time = todo["end_time"].as_str().unwrap_or("No deadline");
+        let url = format!(
+            "https://courses.zju.edu.cn/course/{}/learning-activity#/{}?view=scores",
+            todo["course_id"].as_i64().unwrap_or_default(),
+            todo["id"].as_i64().unwrap_or_default()
+        );
+        body.push_str(&format!(
+            "{} - {} - {} - {}\n",
+            course_name, title, end_time, url
+        ));
+    }
+
+    send_email(
+        &mail_recipient,
+        subject,
+        &body,
+        &smtp_host,
+        smtp_port,
+        &smtp_username,
+        &smtp_password,
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn test_email_config(
+    smtp_host: String,
+    smtp_port: u16,
+    smtp_username: String,
+    smtp_password: String,
+    mail_recipient: String,
+) -> Result<(), String> {
+    let subject = "ZJU Learning Assistant - 邮件测试";
+    let body = "这是一封测试邮件，用于验证 ZJU Learning Assistant 的邮件通知配置是否正确。";
+    send_email(
+        &mail_recipient,
+        subject,
+        body,
+        &smtp_host,
+        smtp_port,
+        &smtp_username,
+        &smtp_password,
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 #[tauri::command]

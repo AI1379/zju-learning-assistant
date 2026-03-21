@@ -185,6 +185,20 @@ export default function Classroom() {
     setSelectedRightKeys([])
   }
 
+  const downloadSubsSubtitle = () => {
+    let subs = rightSubList.filter((item) => selectedRightKeys.includes(item.sub_id))
+    if (subs.length === 0) {
+      notification.error({
+        message: '请选择课件',
+      })
+      return
+    }
+    let tasks = subs.map((item) => new ClassroomTask(item, false, true))
+    addDownloadTasks(tasks)
+    setRightSubList(rightSubList.filter((item) => !selectedRightKeys.includes(item.sub_id)))
+    setSelectedRightKeys([])
+  }
+
   const searchCourse = () => {
     if (searchCourseName === '' && searchTeacherName === '') {
       notification.error({
@@ -274,8 +288,14 @@ export default function Classroom() {
           }
           <div style={{ display: 'flex', alignItems: 'center', flexDirection: 'row', marginLeft: 20 }}>
             <Button
+              icon={<DownloadOutlined />}
+              onClick={downloadSubsSubtitle}
+              disabled={loadingRightSubList || !config.download_subtitle}
+            >{'下载ASR'}</Button>
+            <Button
               type='primary'
               icon={<DownloadOutlined />}
+              style={{ marginLeft: 10 }}
               onClick={downloadSubsPPT}
               disabled={loadingRightSubList}
             >{'下载课件'}</Button>

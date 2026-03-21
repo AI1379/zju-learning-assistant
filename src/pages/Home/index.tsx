@@ -2,10 +2,11 @@ import React, { useEffect, useState, useRef } from 'react'
 import { App, Menu, Layout, Tooltip, Badge, Typography } from 'antd';
 import { invoke } from '@tauri-apps/api/core'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
-import { LogoutOutlined, DownloadOutlined, SettingOutlined, FileSearchOutlined } from '@ant-design/icons';
+import { LogoutOutlined, DownloadOutlined, SettingOutlined, FileSearchOutlined, CarryOutOutlined } from '@ant-design/icons';
 import Learning from '../Learning'
 import Classroom from '../Classroom'
 import Score from '../Score'
+import Todo from '../Todo'
 import Settings from '../../components/Settings'
 import DownloadDrawer from '../../components/DownloadDrawer';
 import { LearningTask, Task } from '../../downloadManager';
@@ -82,6 +83,11 @@ export default function Home({
 
   const [openSettingDrawer, setOpenSettingDrawer] = useState(false)
 
+  const [todos, setTodos] = useState<TodoItem[]>([])
+  const [loadingTodo, setLoadingTodo] = useState(false)
+  const [lastSyncTodo, setLastSyncTodo] = useState<string | null>(null)
+  const [syncingTodo, setSyncingTodo] = useState(true)
+
   const [courseList, setCourseList] = useState<Course[]>([])
   const [selectedCourseKeys, setSelectedCourseKeys] = useState<React.Key[]>([])
   const [loadingUploadList, setLoadingUploadList] = useState(false)
@@ -92,10 +98,13 @@ export default function Home({
 
   const syncScoreTimer = useRef<any>(null)
   const syncUploadTimer = useRef<any>(null)
+  const syncTodoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const syncMailTodoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const selectedCourseKeysRef = useRef(selectedCourseKeys)
   const configRef = useRef(config)
   const notifiedTodo = useRef<Record<string, boolean>>({})
   const todoList = useRef<TodoItem[]>([])
+  const syncingTodoRef = useRef(syncingTodo)
 
   useEffect(() => {
     selectedCourseKeysRef.current = selectedCourseKeys
@@ -105,6 +114,10 @@ export default function Home({
     configRef.current = config
     downloadManager.maxConcurrentTasks = config.max_concurrent_tasks
   }, [config, downloadManager])
+
+  useEffect(() => {
+    syncingTodoRef.current = syncingTodo
+  }, [syncingTodo])
 
   function notifyUpdate(item: ScoreItem, oldTotalGp: number, oldTotalCredit: number, totalGp: number, totalCredit: number, dingUrl?: string) {
     if (!dingUrl) {
@@ -226,31 +239,133 @@ export default function Home({
     else stopSyncScore()
   }
 
+  const updateTodo = (res: TodoItem[]) => {
+    todoList.current = res || []
+    setTodos(res || [])
+    setLastSyncTodo(dayjs().format('YYYY-MM-DD HH:mm:ss'))
+
+    if (!res || res.length === 0) {
+      return
+    }
+
+    res.forEach(async (item) => {
+      if (item.end_time) {
+        const key = `${item.course_id}-${item.id}-${item.end_time}`
+        const diffTime = dayjs(item.end_time).diff(dayjs(), 'minute')
+        if (!notifiedTodo.current[key] && diffTime <= 60 && diffTime > 0) {
+          let permissionGranted = await isPermissionGranted();
+          if (!permissionGranted) {
+            const permission = await requestPermission();
+            permissionGranted = permission === 'granted';
+          }
+          if (permissionGranted) {
+            sendNotification({
+              title: `距离 ${item.title} 截止不足一个小时`,
+              body: `${item.course_name}-${item.title}: ${dayjs(item.end_time).format('YYYY-MM-DD HH:mm:ss')}`
+            });
+            notifiedTodo.current[key] = true
+          }
+        }
+      }
+    })
+  }
+
   const syncTodoTask = () => {
     invoke<TodoItem[]>('sync_todo_once').then((res) => {
-      if (res && res.length !== 0) {
-        todoList.current = res
-        res.forEach(async (item) => {
-          if (item.end_time) {
-            const key = `${item.course_id}-${item.id}-${item.end_time}`
-            const diffTime = dayjs(item.end_time).diff(dayjs(), 'minute')
-            if (!notifiedTodo.current[key] && diffTime <= 60 && diffTime > 0) {
-              let permissionGranted = await isPermissionGranted();
-              if (!permissionGranted) {
-                const permission = await requestPermission();
-                permissionGranted = permission === 'granted';
-              }
-              if (permissionGranted) {
-                sendNotification({
-                  title: `距离 ${item.title} 截止不足一个小时`,
-                  body: `${item.course_name}-${item.title}: ${dayjs(item.end_time).format('YYYY-MM-DD HH:mm:ss')}`
-                });
-                notifiedTodo.current[key] = true
-              }
-            }
-          }
+      updateTodo(res || [])
+    })
+  }
+
+  const startSyncTodo = () => {
+    const task = () => {
+      setLoadingTodo(true)
+      invoke<TodoItem[]>('sync_todo_once').then((res) => {
+        updateTodo(res || [])
+      }).catch((err) => {
+        notification.error({
+          message: '待办事项同步失败',
+          description: String(err)
+        })
+      }).finally(() => {
+        setLoadingTodo(false)
+        if (syncingTodoRef.current) {
+          syncTodoTimer.current = setTimeout(task, 60000)
+        }
+      })
+    }
+    task()
+  }
+
+  const stopSyncTodo = () => {
+    if (syncTodoTimer.current) {
+      clearTimeout(syncTodoTimer.current)
+      syncTodoTimer.current = null
+    }
+  }
+
+  const startMailSyncTodo = () => {
+    const task = () => {
+      if (!syncingTodoRef.current) {
+        return
+      }
+
+      if (configRef.current.mail_notifications) {
+        invoke<TodoItem[]>('sync_todo_once').then((res) => {
+          const currentTodos = res || []
+          if (currentTodos.length === 0) return
+          return invoke('mail_todo', {
+            todoList: currentTodos,
+            smtpHost: configRef.current.smtp_host,
+            smtpPort: configRef.current.smtp_port,
+            smtpUsername: configRef.current.smtp_username,
+            smtpPassword: configRef.current.smtp_password,
+            mailRecipient: configRef.current.mail_recipient,
+          })
+        }).catch((err) => {
+          notification.error({
+            message: '待办邮件发送失败',
+            description: String(err)
+          })
         })
       }
+
+      syncMailTodoTimer.current = setTimeout(task, 6 * 60 * 60 * 1000)
+    }
+
+    syncMailTodoTimer.current = setTimeout(task, 6 * 60 * 60 * 1000)
+  }
+
+  const stopMailSyncTodo = () => {
+    if (syncMailTodoTimer.current) {
+      clearTimeout(syncMailTodoTimer.current)
+      syncMailTodoTimer.current = null
+    }
+  }
+
+  const handleSwitchSyncTodo = (checked: boolean) => {
+    setSyncingTodo(checked)
+    if (checked) {
+      startSyncTodo()
+      startMailSyncTodo()
+    } else {
+      stopSyncTodo()
+      stopMailSyncTodo()
+    }
+  }
+
+  const handleSyncTodo = () => {
+    if (loadingTodo) return
+    setLoadingTodo(true)
+    invoke<TodoItem[]>('sync_todo_once').then((res) => {
+      updateTodo(res || [])
+      notification.success({ message: '待办事项同步成功' })
+    }).catch((err) => {
+      notification.error({
+        message: '待办事项同步失败',
+        description: String(err)
+      })
+    }).finally(() => {
+      setLoadingTodo(false)
     })
   }
 
@@ -264,8 +379,10 @@ export default function Home({
     // Download list polling is now handled by useDownloadList hook inside components that need it (like DownloadDrawer)
     // We only need the count here, which is provided by useDownloadList() called at the top.
 
-    syncTodoTask()
-    const syncTodoInterval = setInterval(syncTodoTask, 60000)
+    if (syncingTodoRef.current) {
+      startSyncTodo()
+      startMailSyncTodo()
+    }
 
     const unlistenProgress = listen<any>('download-progress', (res) => {
       downloadManager.updateProgress(res.payload)
@@ -282,8 +399,8 @@ export default function Home({
     return () => {
       stopSyncScore()
       stopSyncUpload()
-      // downloadManager.cleanUp() // Do NOT clean up on unmount, as manager is global singleton now
-      clearInterval(syncTodoInterval)
+      stopSyncTodo()
+      stopMailSyncTodo()
       unlistenProgress.then((fn) => fn())
       unlistenClose.then((fn) => fn())
       unlistenExportTodo.then((fn) => fn())
@@ -393,6 +510,11 @@ export default function Home({
               </Badge>
             </Tooltip>
           </Menu.Item>
+          <Menu.Item key='todo' icon={<CarryOutOutlined />}>
+            <Tooltip title={syncingTodo ? `待办同步正在运行 - 上次同步时间：${lastSyncTodo}` : ''}>
+              <span style={{ color: current === 'todo' ? '#1677ff' : undefined }}>待办事项</span>
+            </Tooltip>
+          </Menu.Item>
         </Menu>
         <Menu onClick={onMenuClick} selectedKeys={[current]} mode="horizontal" style={{ float: 'right', lineHeight: '40px', minWidth: 46 * 3 }}>
           <Menu.Item key='download'>
@@ -436,6 +558,14 @@ export default function Home({
           score={score}
           handleSwitch={handleSwitchSyncScore}
           handleSync={handleSyncScore}
+        />}
+        {current === 'todo' && <Todo
+          todos={todos}
+          loading={loadingTodo}
+          lastSync={lastSyncTodo}
+          syncing={syncingTodo}
+          handleSwitch={handleSwitchSyncTodo}
+          handleSync={handleSyncTodo}
         />}
       </Content>
       {/* Updated: using downloadTasks from hook */}
