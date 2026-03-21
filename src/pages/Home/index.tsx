@@ -512,9 +512,7 @@ export default function Home({
           </Menu.Item>
           <Menu.Item key='todo' icon={<CarryOutOutlined />}>
             <Tooltip title={syncingTodo ? `待办同步正在运行 - 上次同步时间：${lastSyncTodo}` : ''}>
-              <Badge dot={true} count={syncingTodo ? 1 : 0} color='green'>
-                <span style={{ color: current === 'todo' ? '#1677ff' : undefined }}>待办事项</span>
-              </Badge>
+              <span style={{ color: current === 'todo' ? '#1677ff' : undefined }}>待办事项</span>
             </Tooltip>
           </Menu.Item>
         </Menu>

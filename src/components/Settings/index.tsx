@@ -305,7 +305,6 @@ export default function Settings({
                 </div>
               }
             />
-            <Switch checked={config.mail_notifications} onChange={(checked) => updateConfigField('mail_notifications', checked)} />
           </List.Item>
 
           <List.Item>
