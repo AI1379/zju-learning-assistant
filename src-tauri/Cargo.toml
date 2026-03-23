@@ -14,10 +14,12 @@ rust-version = "1.77.2"
 [[bin]]
 name = "app"
 path = "src/main.rs"
+required-features = ["gui"]
 
 [[bin]]
 name = "zju-assist-cli"
 path = "src/bin/cli.rs"
+required-features = ["cli"]
 
 [lib]
 name = "app_lib"
@@ -79,10 +81,13 @@ tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
 
 [features]
+default = ["gui"]
+gui = []
+cli = []
 # this feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.
 # If you use cargo directly instead of tauri's cli you can use this feature flag to switch between tauri's `dev` and `build` modes.
 # DO NOT REMOVE!!
-custom-protocol = [ "tauri/custom-protocol" ]
+custom-protocol = ["gui", "tauri/custom-protocol"]
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.

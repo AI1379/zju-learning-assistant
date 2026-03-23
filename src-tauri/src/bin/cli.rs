@@ -1,8 +1,14 @@
 use anyhow::{anyhow, Result};
-use app_lib::logic::{download_upload_core, get_uploads_list_core};
-use app_lib::model::Upload;
-use app_lib::utils::images_to_pdf;
-use app_lib::zju_assist::ZjuAssist;
+
+#[path = "../logic.rs"]
+mod logic;
+#[path = "../model.rs"]
+mod model;
+#[path = "../utils/mod.rs"]
+mod utils;
+#[path = "../zju_assist.rs"]
+mod zju_assist;
+
 use clap::{ArgAction, Parser, Subcommand};
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
@@ -14,6 +20,11 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+use logic::{download_upload_core, get_uploads_list_core};
+use model::Upload;
+use utils::images_to_pdf;
+use zju_assist::ZjuAssist;
 
 const KEYRING_SERVICE: &str = "zju-assist-cli";
 const CONFIG_FILE_NAME: &str = "cli-config.json";

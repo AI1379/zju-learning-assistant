@@ -1,3 +1,5 @@
+#![cfg(feature = "gui")]
+
 mod controller;
 pub mod logic;
 pub mod model;

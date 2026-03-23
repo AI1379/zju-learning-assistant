@@ -1,7 +1,7 @@
 <h1 align="center">
   <img src="src-tauri/icons/icon.png" width="128" />
   <br>
-  ZLA: ZJU Learning Assistant
+  ZLA-<i>IM</i>: ZJU Learning Assistant - <i>IMproved</i>
   <br>
 </h1>
 
@@ -26,6 +26,7 @@ P.S. 由于没有购买 CA 签名，ZJU Learning Assistant (aka. ZLA) 没有签�
 ### 下载安装
 
 从 [Release](https://github.com/PeiPei233/zju-learning-assistant/releases) 下载对应系统的最新版本，安装后打开即可。
+
 - Windows 用户可下载 `.exe` `.msi` 文件进行安装。
 - Linux 用户可下载 `.AppImage` 文件，赋予可执行权限后运行。或者下载 `.deb` 文件进行安装。
 - Mac 用户可下载 `.dmg` 文件进行安装，或下载 `.app.tar.gz` 文件解压后运行。Intel 对应 `x86_64` 版本，Apple Silicon 对应 `aarch64` 版本。
@@ -84,6 +85,7 @@ P.S. 由于没有购买 CA 签名，ZJU Learning Assistant (aka. ZLA) 没有签�
 在 ZLA 的任务栏图标菜单中，您可以查看学在浙大的待办事项，同时也可以导出待办事项为。当您选择菜单中的 **导出待办事项** > **导出为 iCalendar 文件** 后，ZLA 会将待办事项导出为 `.ics` 文件。您可以将该文件导入到日历软件中，以便查看学在浙大的待办事项。例如，如果您想跨平台并且去重，可以导入到 Google 日历中。
 
 对于 macOS 用户，还可以选择将待办事项导入到 **日历 App** 或 **提醒事项 App** 中：
+
 - **导入到日历 App**：ZLA 会将待办事项导入到一个名为 `Learning in ZJU` 的日历中，并自动忽略重复的待办。如果该日历不存在，则会自动创建，由 ZLA 自动创建的日历默认保存在 iCloud 中。
 - **导入到提醒事项 APP**：ZLA 会将待办事项导入到默认待办列表中。若您已经打开了默认待办列表的 iCloud 同步，则会自动同步到 iCloud。
 
@@ -101,6 +103,8 @@ ZLA 不会将你的学号、密码上传到任何服务器，用于自动登录�
 
 ## 为什么要开发这个软件？
 
+> 以下是原作者 [PeiPei233](https://github.com/PeiPei233) 的话
+
 ![Rewrite in Rust!](assets/rust.png)
 
 **Rewrite in Rust!**
@@ -109,14 +113,19 @@ ZLA 不会将你的学号、密码上传到任何服务器，用于自动登录�
 
 感谢几位友人在开发和测试过程中的鼎力相助：[@wangwhh](https://github.com/wangwhh) [@stormckey](https://github.com/stormckey) [@VVsxmja](https://github.com/VVsxmja) [@abmfy](https://github.com/abmfy)
 
+> 以下是[我](https://github.com/AI1379)的话
+
+首先感谢原作者的无私贡献。我在原作者的基础上加了一些自己的小功能，但是对整个项目做了一些比较大的改动，所以就干脆分出来一个新的项目。上游的重要更新我这边也会尽量更新，比较重要的 Bug 修复也会 PR 回去交给上游。
+
 ## 免责声明
 
 ZLA 实际上是在模拟您在浏览器中登录学在浙大、获取课件列表、下载课件的过程，且不会妨碍学校系统正常工作。请您在使用中遵守学校的相关规定，尊重、保护他人的知识产权。ZLA 不对您的任何行为负责，造成的任何后果由您自行承担。
 
 ## To-Do List
 
-- [ ] 将任务栏菜单的 ToDo List 做成独立面板
+- [ ] 比较完善的 CLI 功能
 - [ ] 支持同步待办到 CalDAV 服务器
+- [x] ~~将任务栏菜单的 ToDo List 做成独立面板~~
 - [x] ~~批量下载导出智云课堂 PPT~~
 - [x] ~~增量下载~~
 - [x] ~~集成成绩更新推送~~

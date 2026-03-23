@@ -4,7 +4,10 @@
     "beforeBuildCommand": "npm run build",
     "beforeDevCommand": "npm run dev",
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173"
+    "devUrl": "http://localhost:5173",
+    "features": [
+      "gui"
+    ]
   },
   "bundle": {
     "active": true,
