@@ -26,12 +26,12 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon"], optional = true }
 reqwest = { version = "0.12.12", features = ["json", "cookies", "stream"] }
 regex = "1"
 num = "0.4.3"
@@ -49,14 +49,14 @@ md5 = "0.7.0"
 dashmap = "5.5.3"
 keyring = "2.3.3"
 anyhow = "1.0.95"
-tauri-plugin-cli = "2"
-tauri-plugin-fs = "2"
-tauri-plugin-process = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-notification = "2"
-tauri-plugin-shell = "2"
-tauri-plugin-log = "2.2.1"
-tauri-plugin-os = "2"
+tauri-plugin-cli = { version = "2", optional = true }
+tauri-plugin-fs = { version = "2", optional = true }
+tauri-plugin-process = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-notification = { version = "2", optional = true }
+tauri-plugin-shell = { version = "2", optional = true }
+tauri-plugin-log = { version = "2.2.1", optional = true }
+tauri-plugin-os = { version = "2", optional = true }
 lettre = { version = "0.11.19", default-features = false, features = [
 	"tokio1",
 	"builder",
@@ -77,17 +77,31 @@ objc2-event-kit = { version = "0.2.2", features = ["all"] }
 objc2-foundation = { version = "0.2.2", features = ["all"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-autostart = "2"
-tauri-plugin-updater = "2"
+tauri-plugin-autostart = { version = "2", optional = true }
+tauri-plugin-updater = { version = "2", optional = true }
 
 [features]
 default = ["gui"]
-gui = []
+tauri-build-support = ["dep:tauri-build"]
+gui = [
+	"tauri-build-support",
+	"dep:tauri",
+	"dep:tauri-plugin-cli",
+	"dep:tauri-plugin-fs",
+	"dep:tauri-plugin-process",
+	"dep:tauri-plugin-dialog",
+	"dep:tauri-plugin-notification",
+	"dep:tauri-plugin-shell",
+	"dep:tauri-plugin-log",
+	"dep:tauri-plugin-os",
+	"dep:tauri-plugin-autostart",
+	"dep:tauri-plugin-updater",
+]
 cli = []
 # this feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.
 # If you use cargo directly instead of tauri's cli you can use this feature flag to switch between tauri's `dev` and `build` modes.
 # DO NOT REMOVE!!
-custom-protocol = ["gui", "tauri/custom-protocol"]
+custom-protocol = ["gui", "tauri-build-support", "tauri/custom-protocol"]
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.

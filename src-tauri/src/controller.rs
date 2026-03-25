@@ -1035,14 +1035,14 @@ pub fn open_file(handle: AppHandle, path: String, folder: bool) -> Result<(), St
             #[cfg(target_os = "windows")]
             Command::new("explorer.exe")
                 .arg("/select,")
-                .arg(path)
+                .arg(&path)
                 .spawn()
                 .map_err(|err| err.to_string())?; // explorer.exe /select,"path"
 
             #[cfg(target_os = "macos")]
             Command::new("open")
                 .arg("-R")
-                .arg(path)
+                .arg(&path)
                 .spawn()
                 .map_err(|err| err.to_string())?;
 
@@ -1071,19 +1071,19 @@ pub fn open_file(handle: AppHandle, path: String, folder: bool) -> Result<(), St
                 .arg("/c")
                 .arg("start")
                 .raw_arg(r#""""#)
-                .arg(path)
+                .arg(&path)
                 .spawn()
                 .map_err(|err| err.to_string())?; // cmd /c start "" "path"
 
             #[cfg(target_os = "macos")]
             Command::new("open")
-                .arg(path)
+                .arg(&path)
                 .spawn()
                 .map_err(|err| err.to_string())?;
 
             #[cfg(target_os = "linux")]
             Command::new("xdg-open")
-                .arg(path)
+                .arg(&path)
                 .spawn()
                 .map_err(|err| err.to_string())?;
 

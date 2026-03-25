@@ -65,3 +65,59 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  build-cli:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            target: 'aarch64-apple-darwin'
+            artifact_name: 'zju-assist-cli-macos-aarch64'
+            binary_path: 'src-tauri/target/aarch64-apple-darwin/release/zju-assist-cli'
+          - platform: 'macos-latest'
+            target: 'x86_64-apple-darwin'
+            artifact_name: 'zju-assist-cli-macos-x86_64'
+            binary_path: 'src-tauri/target/x86_64-apple-darwin/release/zju-assist-cli'
+          - platform: 'ubuntu-22.04'
+            target: 'x86_64-unknown-linux-gnu'
+            artifact_name: 'zju-assist-cli-linux-x86_64'
+            binary_path: 'src-tauri/target/x86_64-unknown-linux-gnu/release/zju-assist-cli'
+          - platform: 'windows-latest'
+            target: 'x86_64-pc-windows-msvc'
+            artifact_name: 'zju-assist-cli-windows-x86_64'
+            binary_path: 'src-tauri/target/x86_64-pc-windows-msvc/release/zju-assist-cli.exe'
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'npm'
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: install frontend dependencies
+        run: npm install
+
+      - name: build cli
+        run: cargo build --manifest-path src-tauri/Cargo.toml --bin zju-assist-cli --features cli --no-default-features --release --target ${{ matrix.target }}
+
+      - name: upload cli artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.binary_path }}
