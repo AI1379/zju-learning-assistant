@@ -114,6 +114,9 @@ pub fn run() {
                 llm_temperature: 0.2,
                 llm_prompt: "你是一个专业的课程助教。请根据提供的课程字幕内容，总结课程的核心知识点、重点和难点。输出格式要求清晰、结构化，使用 Markdown 格式。".to_string(), 
                 llm_hide_think_tag: true,
+
+                show_live_capture_controls: true,
+                live_capture_auto_start: false,
             };
 
             #[cfg(desktop)]
@@ -299,6 +302,16 @@ pub fn run() {
             controller::check_evaluation_done,
             controller::get_score,
             controller::notify_score,
+            controller::start_live_transcript_capture,
+            controller::schedule_live_transcript_capture_at,
+            controller::cancel_scheduled_live_transcript_capture,
+            controller::stop_live_transcript_capture,
+            controller::clear_live_transcript_session,
+            controller::get_live_transcript_lines,
+            controller::get_live_transcript_sessions,
+            controller::export_live_transcript_text,
+            controller::export_live_transcript_to_file,
+            controller::backfill_live_transcript_from_history,
             controller::get_config,
             controller::set_config,
             controller::test_email_config,

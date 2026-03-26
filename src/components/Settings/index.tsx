@@ -209,6 +209,36 @@ export default function Settings({
 
           <List.Item>
             <List.Item.Meta
+              title={<Text style={{ fontWeight: 'normal' }}>显示直播同传采集按钮</Text>}
+              description={<div>
+                <Text type="secondary" style={{ fontWeight: 'normal', fontSize: 12 }}>
+                  关闭后，课堂页面将隐藏“开始采集/停止采集/导出同传”等按钮。
+                </Text>
+              </div>}
+            />
+            <Switch
+              checked={!!config.show_live_capture_controls}
+              onChange={(checked) => updateConfigField('show_live_capture_controls', checked)}
+            />
+          </List.Item>
+
+          <List.Item>
+            <List.Item.Meta
+              title={<Text style={{ fontWeight: 'normal' }}>按上课时间自动开始同传采集</Text>}
+              description={<div>
+                <Text type="secondary" style={{ fontWeight: 'normal', fontSize: 12 }}>
+                  开启后，应用会在课堂页面后台运行时，按课程开始时间自动触发采集。
+                </Text>
+              </div>}
+            />
+            <Switch
+              checked={!!config.live_capture_auto_start}
+              onChange={(checked) => updateConfigField('live_capture_auto_start', checked)}
+            />
+          </List.Item>
+
+          <List.Item>
+            <List.Item.Meta
               title={<Text style={{ fontWeight: 'normal' }}>AI 课程总结</Text>}
               description={
                 <div>

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use chrono::TimeZone;
 
 #[path = "../logic.rs"]
 mod logic;
@@ -9,9 +10,10 @@ mod utils;
 #[path = "../zju_assist.rs"]
 mod zju_assist;
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -20,6 +22,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration};
 
 use logic::{download_upload_core, get_uploads_list_core};
 use model::Upload;
@@ -133,11 +136,32 @@ enum Commands {
         #[arg(short, long)]
         path: Option<String>,
     },
+    /// Capture classroom live interpretation and stream to stdout.
+    LiveCapture {
+        /// Classroom course id (Zhiyun Classroom course id).
+        #[arg(long)]
+        classroom_course_id: i64,
+        /// Sub-session id to capture. If omitted, picks the nearest upcoming/live one.
+        #[arg(long)]
+        sub_id: Option<i64>,
+        /// Stdout output format.
+        #[arg(long, default_value = "text")]
+        format: LiveCaptureOutputFormat,
+        /// Polling interval in seconds.
+        #[arg(long, default_value_t = 2)]
+        poll_interval: u64,
+    },
     /// Configure dedicated proxy for zju-learning-assistant requests.
     Proxy {
         #[command(subcommand)]
         command: ProxyCommand,
     },
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum LiveCaptureOutputFormat {
+    Text,
+    Jsonl,
 }
 
 #[derive(Subcommand)]
@@ -593,6 +617,171 @@ async fn get_classroom_courses(
     Ok(merged)
 }
 
+fn select_live_sub(subs: &[model::Subject], sub_id: Option<i64>) -> Result<model::Subject> {
+    if let Some(target) = sub_id {
+        return subs
+            .iter()
+            .find(|sub| sub.sub_id == target)
+            .cloned()
+            .ok_or(anyhow!("Sub {} not found in this classroom course.", target));
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let mut candidates = subs
+        .iter()
+        .filter(|sub| sub.start_at.is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if candidates.is_empty() {
+        return subs
+            .first()
+            .cloned()
+            .ok_or(anyhow!("No classroom sessions found in this course."));
+    }
+
+    candidates.sort_by_key(|sub| {
+        let ts = sub.start_at.unwrap_or(i64::MAX);
+        (ts - now).abs()
+    });
+    Ok(candidates[0].clone())
+}
+
+fn format_duration_ms(total_ms: i64) -> String {
+    let hours = total_ms / 3_600_000;
+    let minutes = (total_ms % 3_600_000) / 60_000;
+    let seconds = (total_ms % 60_000) / 1_000;
+    let millis = total_ms % 1_000;
+    if hours > 0 {
+        format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
+    } else {
+        format!("{:02}:{:02}.{:03}", minutes, seconds, millis)
+    }
+}
+
+fn format_live_ts_human(ts: i64) -> String {
+    // qlite timestamps may be unix epoch (sec/ms) or timeline offsets.
+    if (946_684_800_000..=4_102_444_800_000).contains(&ts) {
+        if let Some(dt) = chrono::Local.timestamp_millis_opt(ts).single() {
+            return dt.format("%Y-%m-%d %H:%M:%S%.3f %z").to_string();
+        }
+    }
+
+    if (946_684_800..=4_102_444_800).contains(&ts) {
+        if let Some(dt) = chrono::Local.timestamp_opt(ts, 0).single() {
+            return dt.format("%Y-%m-%d %H:%M:%S %z").to_string();
+        }
+    }
+
+    if ts >= 0 {
+        let as_ms = if ts >= 10_000 { ts } else { ts * 1_000 };
+        return format!("T+{}", format_duration_ms(as_ms));
+    }
+
+    ts.to_string()
+}
+
+fn is_final_live_line(line: &model::LiveTranscriptLine) -> bool {
+    line.end_time == Some(1)
+}
+
+fn print_live_line(format: &LiveCaptureOutputFormat, line: &model::LiveTranscriptLine) -> Result<()> {
+    match format {
+        LiveCaptureOutputFormat::Text => {
+            let mut row = String::new();
+            if let (Some(begin), Some(end)) = (line.text_begin_time, line.text_end_time.or(line.end_time)) {
+                row.push_str(&format!(
+                    "[{} -> {}] ",
+                    format_live_ts_human(begin),
+                    format_live_ts_human(end)
+                ));
+            }
+            if !line.trans_text.trim().is_empty() {
+                row.push_str(line.trans_text.trim());
+            } else {
+                row.push_str(line.source_text.trim());
+            }
+            println!("{}", row.trim_end());
+        }
+        LiveCaptureOutputFormat::Jsonl => {
+            let line_json = json!({
+                "source_text": line.source_text,
+                "trans_text": line.trans_text,
+                "text_begin_time": line.text_begin_time,
+                "text_end_time": line.text_end_time,
+                "end_time": line.end_time,
+                "received_at_ms": line.received_at_ms,
+                "text_begin_human": line.text_begin_time.map(format_live_ts_human),
+                "text_end_human": line.text_end_time.or(line.end_time).map(format_live_ts_human),
+            });
+            println!("{}", serde_json::to_string(&line_json)?);
+        }
+    }
+    Ok(())
+}
+
+async fn stream_live_capture_stdout(
+    assist: &ZjuAssist,
+    course_id: i64,
+    sub_id: i64,
+    format: LiveCaptureOutputFormat,
+    poll_interval: u64,
+) -> Result<()> {
+    assist.start_live_transcript_capture(course_id, sub_id).await?;
+    let mut last_index = 0usize;
+    let mut disconnected_checks = 0u8;
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("Received Ctrl-C, stopping capture...");
+                break;
+            }
+            _ = sleep(Duration::from_secs(poll_interval.max(1))) => {
+                let lines = assist.get_live_transcript_lines(sub_id).await?;
+                if lines.len() > last_index {
+                    for line in &lines[last_index..] {
+                        if !is_final_live_line(line) {
+                            continue;
+                        }
+                        print_live_line(&format, line)?;
+                    }
+                    last_index = lines.len();
+                }
+
+                let sessions = assist.get_live_transcript_sessions().await;
+                let is_running = sessions
+                    .iter()
+                    .find(|s| s.sub_id == sub_id)
+                    .map(|s| s.is_running)
+                    .unwrap_or(false);
+
+                if is_running {
+                    disconnected_checks = 0;
+                } else {
+                    disconnected_checks = disconnected_checks.saturating_add(1);
+                    if disconnected_checks >= 2 {
+                        eprintln!("Live stream disconnected, trying to reconnect...");
+                        let _ = assist.clear_live_transcript_session(sub_id).await;
+                        match assist.start_live_transcript_capture(course_id, sub_id).await {
+                            Ok(_) => {
+                                disconnected_checks = 0;
+                            }
+                            Err(err) => {
+                                eprintln!("Reconnect failed: {}", err);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = assist.stop_live_transcript_capture(sub_id).await;
+    let _ = assist.clear_live_transcript_session(sub_id).await;
+    Ok(())
+}
+
 fn select_upload(
     uploads: &[Upload],
     file_id: Option<i64>,
@@ -972,6 +1161,37 @@ async fn main() -> Result<()> {
                 .await?;
                 println!("Done {} - {}", sub.course_name, sub.sub_name);
             }
+        }
+        Commands::LiveCapture {
+            classroom_course_id,
+            sub_id,
+            format,
+            poll_interval,
+        } => {
+            let config = load_cli_config()?;
+            let mut assist = get_assist_with_session(&config).await?;
+            assist.keep_classroom_alive().await?;
+
+            let subs = assist.get_course_subs(classroom_course_id).await?;
+            let target_sub = select_live_sub(&subs, sub_id)?;
+
+            eprintln!(
+                "Start live capture: classroom_course_id={} sub_id={} course={} sub={} format={:?}",
+                classroom_course_id,
+                target_sub.sub_id,
+                target_sub.course_name,
+                target_sub.sub_name,
+                format
+            );
+
+            stream_live_capture_stdout(
+                &assist,
+                target_sub.course_id,
+                target_sub.sub_id,
+                format,
+                poll_interval,
+            )
+            .await?;
         }
         Commands::Proxy { command } => {
             let mut config = load_cli_config()?;

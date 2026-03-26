@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Button, Card, App, Row, Col, Tooltip, Typography, Input, Segmented, DatePicker } from 'antd';
+import { Button, Card, App, Row, Col, Tooltip, Typography, Input, Segmented, DatePicker, Dropdown } from 'antd';
 import { invoke } from '@tauri-apps/api/core'
-import { ReloadOutlined, DownloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { ReloadOutlined, DownloadOutlined, SearchOutlined, PlayCircleOutlined, StopOutlined, ExportOutlined, HistoryOutlined, DownOutlined } from '@ant-design/icons';
 import SearchTable from '../../components/SearchTable'
 import dayjs, { Dayjs } from 'dayjs';
 import 'dayjs/locale/zh-cn';
@@ -9,7 +9,7 @@ import { ClassroomTask } from '../../downloadManager';
 import { useConfig } from '../../context/ConfigContext';
 import { useDownloadManager, useDownloadList } from '../../context/DownloadContext';
 import { useAddDownloadTasks } from '../../hooks/useAddDownloadTasks';
-import { Subject } from '../../model';
+import { LiveTranscriptSessionStatus, Subject } from '../../model';
 import { ColumnType } from 'antd/es/table';
 
 dayjs.locale('zh-cn')
@@ -40,6 +40,9 @@ export default function Classroom() {
   const [dayRange, setDayRange] = useState<[Dayjs, Dayjs]>([dayjs(), dayjs()])
   const [weekValue, setWeekValue] = useState<Dayjs>(dayjs())
   const [monthValue, setMonthValue] = useState<Dayjs>(dayjs())
+  const [liveSessions, setLiveSessions] = useState<LiveTranscriptSessionStatus[]>([])
+  const [liveBusy, setLiveBusy] = useState(false)
+  const autoStartTriggeredRef = useRef<Set<number>>(new Set())
 
   const selectDateMethodOptions = [
     { label: '日', value: 'day' },
@@ -132,6 +135,204 @@ export default function Classroom() {
     updateMySubList()
   }, [])
 
+  const refreshLiveSessions = async () => {
+    if (!config.show_live_capture_controls) {
+      setLiveSessions([])
+      return
+    }
+    try {
+      const sessions = await invoke<LiveTranscriptSessionStatus[]>('get_live_transcript_sessions')
+      setLiveSessions(sessions)
+    } catch (err) {
+      notification.error({
+        message: '获取同传会话状态失败',
+        description: String(err),
+      })
+    }
+  }
+
+  useEffect(() => {
+    if (!config.show_live_capture_controls) {
+      setLiveSessions([])
+      return
+    }
+    refreshLiveSessions()
+    const timer = window.setInterval(() => {
+      refreshLiveSessions()
+    }, 4000)
+    return () => window.clearInterval(timer)
+  }, [config.show_live_capture_controls])
+
+  useEffect(() => {
+    if (!config.show_live_capture_controls || !config.live_capture_auto_start) {
+      if (config.show_live_capture_controls && !config.live_capture_auto_start) {
+        rightSubList.forEach((sub) => {
+          if (sub.sub_id > 0) {
+            invoke('cancel_scheduled_live_transcript_capture', {
+              subId: sub.sub_id,
+            }).catch(() => { })
+            autoStartTriggeredRef.current.delete(sub.sub_id)
+          }
+        })
+      }
+      return
+    }
+    const scheduleInBackend = async () => {
+      for (const sub of rightSubList) {
+        if (!sub.start_at || sub.sub_id <= 0) {
+          continue
+        }
+        if (autoStartTriggeredRef.current.has(sub.sub_id)) {
+          continue
+        }
+        autoStartTriggeredRef.current.add(sub.sub_id)
+        try {
+          await invoke('schedule_live_transcript_capture_at', {
+            courseId: sub.course_id,
+            subId: sub.sub_id,
+            startAt: sub.start_at,
+          })
+        } catch (err) {
+          autoStartTriggeredRef.current.delete(sub.sub_id)
+          notification.error({
+            message: '自动采集调度失败',
+            description: `${sub.course_name} - ${sub.sub_name}: ${String(err)}`,
+          })
+        }
+      }
+    }
+    scheduleInBackend()
+  }, [config.show_live_capture_controls, config.live_capture_auto_start, rightSubList])
+
+  const selectedLiveSubs = rightSubList.filter((item) => selectedRightKeys.includes(item.sub_id))
+
+  const startLiveCapture = async () => {
+    if (selectedLiveSubs.length === 0) {
+      notification.error({ message: '请选择至少一节课' })
+      return
+    }
+    setLiveBusy(true)
+    const failures: string[] = []
+    for (const sub of selectedLiveSubs) {
+      try {
+        await invoke('start_live_transcript_capture', {
+          courseId: sub.course_id,
+          subId: sub.sub_id,
+        })
+      } catch (err) {
+        failures.push(`${sub.sub_name}: ${String(err)}`)
+      }
+    }
+    await refreshLiveSessions()
+    setLiveBusy(false)
+    if (failures.length > 0) {
+      notification.error({
+        message: '部分会话启动失败',
+        description: failures.join('\n'),
+      })
+    } else {
+      notification.success({ message: '已开始直播同传采集' })
+    }
+  }
+
+  const stopLiveCapture = async () => {
+    if (selectedRightKeys.length === 0) {
+      notification.error({ message: '请选择至少一节课' })
+      return
+    }
+    setLiveBusy(true)
+    const failures: string[] = []
+    for (const subId of selectedRightKeys.map((k) => Number(k))) {
+      try {
+        await invoke('stop_live_transcript_capture', { subId })
+      } catch (err) {
+        failures.push(`${subId}: ${String(err)}`)
+      }
+    }
+    await refreshLiveSessions()
+    setLiveBusy(false)
+    if (failures.length > 0) {
+      notification.error({
+        message: '部分会话停止失败',
+        description: failures.join('\n'),
+      })
+    } else {
+      notification.success({ message: '已停止采集' })
+    }
+  }
+
+  const backfillLiveHistory = async () => {
+    if (selectedRightKeys.length === 0) {
+      notification.error({ message: '请选择至少一节课' })
+      return
+    }
+    setLiveBusy(true)
+    const resultMessages: string[] = []
+    for (const subId of selectedRightKeys.map((k) => Number(k))) {
+      try {
+        const inserted = await invoke<number>('backfill_live_transcript_from_history', { subId })
+        resultMessages.push(`sub_id=${subId} 回填 ${inserted} 行`)
+      } catch (err) {
+        resultMessages.push(`sub_id=${subId} 失败: ${String(err)}`)
+      }
+    }
+    await refreshLiveSessions()
+    setLiveBusy(false)
+    notification.info({
+      message: '历史字幕回填完成',
+      description: resultMessages.join('\n'),
+    })
+  }
+
+  const exportLiveTranscript = async () => {
+    if (selectedLiveSubs.length === 0) {
+      notification.error({ message: '请选择至少一节课' })
+      return
+    }
+
+    setLiveBusy(true)
+    for (const sub of selectedLiveSubs) {
+      try {
+        const savedPath = await invoke<string>('export_live_transcript_to_file', {
+          subId: sub.sub_id,
+          courseName: sub.course_name,
+          subName: sub.sub_name,
+          format: 'txt',
+          includeOriginal: true,
+          withTimestamps: true,
+        })
+        notification.success({
+          message: '导出同传成功',
+          description: `已保存到: ${savedPath}`,
+        })
+      } catch (err) {
+        notification.error({
+          message: '导出同传失败',
+          description: `${sub.sub_name}: ${String(err)}`,
+        })
+      }
+    }
+    setLiveBusy(false)
+  }
+
+  const handleLiveActionClick = ({ key }: { key: string }) => {
+    if (key === 'start') {
+      startLiveCapture()
+      return
+    }
+    if (key === 'stop') {
+      stopLiveCapture()
+      return
+    }
+    if (key === 'backfill') {
+      backfillLiveHistory()
+      return
+    }
+    if (key === 'export') {
+      exportLiveTranscript()
+    }
+  }
+
   const leftColumns: ColumnType<Subject>[] = [
     { dataIndex: 'course_name', title: '课程名称' },
     { dataIndex: 'sub_name', title: '上课时间' },
@@ -164,7 +365,27 @@ export default function Classroom() {
     }
   ];
 
-  let myRightColumns = rightColumns.map((item) => {
+  const liveSessionMap = new Map(liveSessions.map((session) => [session.sub_id, session]))
+  const rightColumnsWithLive: ColumnType<Subject>[] = config.show_live_capture_controls
+    ? [
+      ...rightColumns,
+      {
+        title: '同传采集',
+        dataIndex: 'sub_id',
+        render: (_: any, row: Subject) => {
+          const status = liveSessionMap.get(row.sub_id)
+          if (!status) {
+            return '未开始'
+          }
+          return `${status.is_running ? '采集中' : '已停止'} (${status.line_count})`
+        },
+        // @ts-ignore
+        searchable: false,
+      }
+    ]
+    : rightColumns;
+
+  let myRightColumns = rightColumnsWithLive.map((item) => {
     if (item.dataIndex === 'lecturer_name') {
       return { ...item, responsive: undefined }
     }
@@ -287,8 +508,27 @@ export default function Classroom() {
             </div>
           }
           <div style={{ display: 'flex', alignItems: 'center', flexDirection: 'row', marginLeft: 20 }}>
+            {config.show_live_capture_controls && (
+              <Dropdown
+                trigger={['click']}
+                menu={{
+                  onClick: handleLiveActionClick,
+                  items: [
+                    { key: 'start', label: '开始采集', icon: <PlayCircleOutlined /> },
+                    { key: 'stop', label: '停止采集', icon: <StopOutlined /> },
+                    { key: 'backfill', label: '回填历史', icon: <HistoryOutlined /> },
+                    { key: 'export', label: '导出同传', icon: <ExportOutlined /> },
+                  ],
+                }}
+              >
+                <Button disabled={loadingRightSubList || liveBusy}>
+                  同传操作 <DownOutlined />
+                </Button>
+              </Dropdown>
+            )}
             <Button
               icon={<DownloadOutlined />}
+              style={{ marginLeft: config.show_live_capture_controls ? 10 : 0 }}
               onClick={downloadSubsSubtitle}
               disabled={loadingRightSubList || !config.download_subtitle}
             >{'下载ASR'}</Button>
@@ -309,7 +549,7 @@ export default function Classroom() {
               selectedRowKeys: selectedLeftKeys,
               onChange: setSelectedLeftKeys,
             }}
-            rowKey={selectedCourseRange === 'my' ? 'sub_id' : 'course_id'}
+            rowKey='course_id'
             // @ts-ignore
             columns={leftColumns}
             dataSource={leftSubList}
@@ -341,7 +581,7 @@ export default function Classroom() {
             title={() => {
               return (
                 <>
-                  {rightSubList && rightSubList.length !== 0 && <Text ellipsis={{ rows: 1, expandable: false, tooltip: true }} style={{ width: 'calc(100% - 80px)' }}>
+                  {rightSubList && rightSubList.length !== 0 && <Text ellipsis={{ tooltip: true }} style={{ width: 'calc(100% - 80px)' }}>
                     课件列表：已选择 {selectedRightKeys.length} 个课件 共 {rightSubList.filter((item) => selectedRightKeys.includes(item.sub_id)).reduce((total, item) => {
                       return total + item.ppt_image_urls.length
                     }, 0)} 页</Text>}

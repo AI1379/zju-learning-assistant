@@ -24,6 +24,28 @@ export class Subject {
     lecturer_name: string
     path: string
     ppt_image_urls: string[]
+    start_at?: number
+    room?: string
+    tenant_code?: string
+    sub_public?: string
+}
+
+export interface LiveTranscriptLine {
+    source_text: string
+    trans_text: string
+    text_begin_time?: number
+    text_end_time?: number
+    end_time?: number
+    received_at_ms: number
+}
+
+export interface LiveTranscriptSessionStatus {
+    course_id: number
+    sub_id: number
+    ws_url: string
+    started_at_ms: number
+    line_count: number
+    is_running: boolean
 }
 
 export class Config {
@@ -53,6 +75,9 @@ export class Config {
     llm_temperature: number
     llm_prompt: string
     llm_hide_think_tag: boolean
+
+    show_live_capture_controls: boolean
+    live_capture_auto_start: boolean
 
     constructor(config?: Partial<Config>) {
         Object.assign(this, config);

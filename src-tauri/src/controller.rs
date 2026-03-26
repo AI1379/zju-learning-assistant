@@ -1,4 +1,7 @@
-use crate::model::{Config, Progress, Subject, Upload, VersionInfo};
+use crate::model::{
+    Config, LiveTranscriptLine, LiveTranscriptSessionStatus, Progress, Subject, Upload,
+    VersionInfo,
+};
 use crate::utils::{export_todo_ics, format_srt_timestamp, images_to_pdf, save_subtitle, send_email};
 use crate::zju_assist::{SubtitleContent, ZjuAssist};
 
@@ -1998,6 +2001,10 @@ pub async fn search_courses(
                 ppt_image_urls,
                 sub_id,
                 sub_name,
+                start_at: None,
+                room: None,
+                tenant_code: None,
+                sub_public: None,
             }
         })
         .collect::<Vec<Subject>>();
@@ -2027,6 +2034,213 @@ pub async fn get_course_all_sub_ppts(
         subs.extend(sub);
     }
     get_sub_ppt_urls(state, config, subs).await
+}
+
+#[tauri::command]
+pub async fn start_live_transcript_capture(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+    course_id: i64,
+    sub_id: i64,
+) -> Result<LiveTranscriptSessionStatus, String> {
+    info!(
+        "start_live_transcript_capture: course_id={} sub_id={}",
+        course_id, sub_id
+    );
+    let mut zju_assist_mut = state.lock().await;
+    zju_assist_mut
+        .keep_classroom_alive()
+        .await
+        .map_err(|err| err.to_string())?;
+    drop(zju_assist_mut);
+
+    let zju_assist = state.lock().await.clone();
+    let _ = zju_assist.cancel_scheduled_live_transcript_capture(sub_id).await;
+    let _ = zju_assist.clear_live_transcript_session(sub_id).await;
+    zju_assist
+        .start_live_transcript_capture(course_id, sub_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn schedule_live_transcript_capture_at(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+    course_id: i64,
+    sub_id: i64,
+    start_at: i64,
+) -> Result<(), String> {
+    info!(
+        "schedule_live_transcript_capture_at: course_id={} sub_id={} start_at={}",
+        course_id, sub_id, start_at
+    );
+    let mut zju_assist_mut = state.lock().await;
+    zju_assist_mut
+        .keep_classroom_alive()
+        .await
+        .map_err(|err| err.to_string())?;
+    drop(zju_assist_mut);
+
+    let zju_assist = state.lock().await.clone();
+    zju_assist
+        .schedule_live_transcript_capture_at(course_id, sub_id, start_at)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_scheduled_live_transcript_capture(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+    sub_id: i64,
+) -> Result<(), String> {
+    info!("cancel_scheduled_live_transcript_capture: sub_id={}", sub_id);
+    let zju_assist = state.lock().await.clone();
+    zju_assist
+        .cancel_scheduled_live_transcript_capture(sub_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn stop_live_transcript_capture(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+    sub_id: i64,
+) -> Result<(), String> {
+    info!("stop_live_transcript_capture: sub_id={}", sub_id);
+    let zju_assist = state.lock().await.clone();
+    zju_assist
+        .stop_live_transcript_capture(sub_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn clear_live_transcript_session(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+    sub_id: i64,
+) -> Result<(), String> {
+    info!("clear_live_transcript_session: sub_id={}", sub_id);
+    let zju_assist = state.lock().await.clone();
+    zju_assist
+        .clear_live_transcript_session(sub_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn get_live_transcript_lines(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+    sub_id: i64,
+) -> Result<Vec<LiveTranscriptLine>, String> {
+    info!("get_live_transcript_lines: sub_id={}", sub_id);
+    let zju_assist = state.lock().await.clone();
+    zju_assist
+        .get_live_transcript_lines(sub_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn get_live_transcript_sessions(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+) -> Result<Vec<LiveTranscriptSessionStatus>, String> {
+    info!("get_live_transcript_sessions");
+    let zju_assist = state.lock().await.clone();
+    Ok(zju_assist.get_live_transcript_sessions().await)
+}
+
+#[tauri::command]
+pub async fn export_live_transcript_text(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+    sub_id: i64,
+    include_original: bool,
+    with_timestamps: bool,
+) -> Result<String, String> {
+    info!(
+        "export_live_transcript_text: sub_id={} include_original={} with_timestamps={}",
+        sub_id, include_original, with_timestamps
+    );
+    let zju_assist = state.lock().await.clone();
+    zju_assist
+        .export_live_transcript_text(sub_id, include_original, with_timestamps)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+fn sanitize_filename_component(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            _ => c,
+        })
+        .collect::<String>()
+}
+
+#[tauri::command]
+pub async fn export_live_transcript_to_file(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+    config: State<'_, Arc<Mutex<Config>>>,
+    sub_id: i64,
+    course_name: String,
+    sub_name: String,
+    format: String,
+    include_original: bool,
+    with_timestamps: bool,
+) -> Result<String, String> {
+    info!(
+        "export_live_transcript_to_file: sub_id={} format={}",
+        sub_id, format
+    );
+    let zju_assist = state.lock().await.clone();
+
+    let file_content = if format.eq_ignore_ascii_case("jsonl") {
+        let lines = zju_assist
+            .get_live_transcript_lines(sub_id)
+            .await
+            .map_err(|err| err.to_string())?;
+        let mut rows = Vec::new();
+        for line in lines {
+            rows.push(serde_json::to_string(&line).map_err(|err| err.to_string())?);
+        }
+        rows.join("\n")
+    } else {
+        zju_assist
+            .export_live_transcript_text(sub_id, include_original, with_timestamps)
+            .await
+            .map_err(|err| err.to_string())?
+    };
+
+    let base_save_path = config.lock().await.save_path.clone();
+    let safe_course = sanitize_filename_component(&course_name);
+    let safe_sub = sanitize_filename_component(&sub_name);
+    let ext = if format.eq_ignore_ascii_case("jsonl") {
+        "jsonl"
+    } else {
+        "txt"
+    };
+    let target_dir = Path::new(&base_save_path).join(&safe_course).join(&safe_sub);
+    tokio::fs::create_dir_all(&target_dir)
+        .await
+        .map_err(|err| err.to_string())?;
+    let file_path = target_dir.join(format!("live-transcript-{}.{}", sub_id, ext));
+    tokio::fs::write(&file_path, file_content)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    Ok(file_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn backfill_live_transcript_from_history(
+    state: State<'_, Arc<Mutex<ZjuAssist>>>,
+    sub_id: i64,
+) -> Result<usize, String> {
+    info!("backfill_live_transcript_from_history: sub_id={}", sub_id);
+    let zju_assist = state.lock().await.clone();
+    zju_assist
+        .backfill_live_transcript_from_history(sub_id)
+        .await
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Ok, Result};
+use futures::{SinkExt, StreamExt};
 use log::{debug, info};
 use percent_encoding::percent_decode_str;
 use regex::Regex;
@@ -10,13 +11,42 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::cmp::min;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fs::File, io::Write, path::Path};
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
-use crate::model::Subject;
+use crate::model::{LiveTranscriptLine, LiveTranscriptSessionStatus, Subject};
 use crate::utils::{measure_latency, rsa_no_padding};
+
+struct LiveTranscriptSession {
+    course_id: i64,
+    sub_id: i64,
+    ws_url: String,
+    started_at_ms: u64,
+    lines: Arc<Mutex<Vec<LiveTranscriptLine>>>,
+    task: JoinHandle<()>,
+}
+
+struct LiveTranscriptStore {
+    sessions: HashMap<i64, LiveTranscriptSession>,
+    auto_tasks: HashMap<i64, JoinHandle<()>>,
+}
+
+impl LiveTranscriptStore {
+    fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+            auto_tasks: HashMap::new(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct ZjuAssist {
@@ -26,6 +56,7 @@ pub struct ZjuAssist {
     password: String,
     proxy_first: bool,
     custom_proxy: Option<String>,
+    live_transcript_store: Arc<Mutex<LiveTranscriptStore>>,
 }
 
 pub struct ZjuRequestBuilder {
@@ -163,6 +194,7 @@ impl ZjuAssist {
             password: "".to_string(),
             proxy_first: true,
             custom_proxy: None,
+            live_transcript_store: Arc::new(Mutex::new(LiveTranscriptStore::new())),
         }
     }
 
@@ -639,6 +671,21 @@ impl ZjuAssist {
                 let sub_id = course["sub_id"].as_str().unwrap().parse::<i64>().unwrap();
                 let sub_name = course["sub_title"].as_str().unwrap().replace("/", "_");
                 let lecturer_name = course["realname"].as_str().unwrap().to_string();
+                let start_at = course["start_at"]
+                    .as_i64()
+                    .or_else(|| course["start_at"].as_str().and_then(|s| s.parse::<i64>().ok()));
+                let room = course["room"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| course["room"].as_i64().map(|v| v.to_string()));
+                let tenant_code = course["tenant_code"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| course["tenant_code"].as_i64().map(|v| v.to_string()));
+                let sub_public = course["sub_public"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| course["sub_public"].as_i64().map(|v| v.to_string()));
                 subs.push(Subject {
                     course_id,
                     course_name: course_name.clone(),
@@ -647,6 +694,10 @@ impl ZjuAssist {
                     lecturer_name,
                     path: "".to_string(), // path will be set when downloading
                     ppt_image_urls: Vec::new(),
+                    start_at,
+                    room,
+                    tenant_code,
+                    sub_public,
                 });
             }
         }
@@ -692,6 +743,21 @@ impl ZjuAssist {
                         let sub_id = course["sub_id"].as_str().unwrap().parse::<i64>().unwrap();
                         let sub_name = course["sub_title"].as_str().unwrap().replace("/", "_");
                         let lecturer_name = course["realname"].as_str().unwrap().to_string();
+                        let start_at = course["start_at"].as_i64().or_else(|| {
+                            course["start_at"].as_str().and_then(|s| s.parse::<i64>().ok())
+                        });
+                        let room = course["room"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| course["room"].as_i64().map(|v| v.to_string()));
+                        let tenant_code = course["tenant_code"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| course["tenant_code"].as_i64().map(|v| v.to_string()));
+                        let sub_public = course["sub_public"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| course["sub_public"].as_i64().map(|v| v.to_string()));
                         subs.push(Subject {
                             course_id,
                             course_name: course_name.clone(),
@@ -700,6 +766,10 @@ impl ZjuAssist {
                             lecturer_name,
                             path: "".to_string(), // path will be set when downloading
                             ppt_image_urls: Vec::new(),
+                            start_at,
+                            room,
+                            tenant_code,
+                            sub_public,
                         });
                     }
                 }
@@ -808,6 +878,21 @@ impl ZjuAssist {
                         let sub_id = sub["id"].as_str().unwrap().parse::<i64>().unwrap();
                         let sub_name = sub["sub_title"].as_str().unwrap().replace("/", "_");
                         let lecturer_name = sub["lecturer_name"].as_str().unwrap().to_string();
+                        let start_at = sub["start_at"]
+                            .as_i64()
+                            .or_else(|| sub["start_at"].as_str().and_then(|s| s.parse::<i64>().ok()));
+                        let room = sub["room"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| sub["room"].as_i64().map(|v| v.to_string()));
+                        let tenant_code = sub["tenant_code"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| sub["tenant_code"].as_i64().map(|v| v.to_string()));
+                        let sub_public = sub["sub_public"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| sub["sub_public"].as_i64().map(|v| v.to_string()));
                         subs.push(Subject {
                             course_id,
                             course_name: course_name.clone(),
@@ -816,6 +901,10 @@ impl ZjuAssist {
                             lecturer_name,
                             path: "".to_string(), // path will be set when downloading
                             ppt_image_urls: Vec::new(),
+                            start_at,
+                            room,
+                            tenant_code,
+                            sub_public,
                         });
                     }
                 }
@@ -1133,6 +1222,531 @@ impl ZjuAssist {
         }
 
         Err(anyhow!("Probe score failed"))
+    }
+
+    async fn get_trans_socket_url(&self, course_id: i64, sub_id: i64) -> Result<String> {
+        let token = self.get_token()?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            USER_AGENT,
+            "Mozilla/5.0 (X11; Linux x86_64; rv:88.0) Gecko/20100101 Firefox/88.0"
+                .parse()
+                .unwrap(),
+        );
+        headers.insert(AUTHORIZATION, format!("Bearer {}", token).parse().unwrap());
+
+        let res = self
+            .get(format!(
+                "https://yjapi.cmc.zju.edu.cn/courseapi/v2/course/catalogue?course_id={}",
+                course_id
+            ))
+            .headers(headers)
+            .send()
+            .await?;
+        let json: Value = res.json().await?;
+
+        let mut candidate_subs: Vec<Value> = Vec::new();
+
+        if let Some(catalogue) = json["data"]["course"]["catalogue"].as_array() {
+            for node in catalogue {
+                if let Some(subs) = node.get("sub").and_then(|v| v.as_array()) {
+                    candidate_subs.extend(subs.iter().cloned());
+                }
+            }
+        }
+
+        if let Some(flat_list) = json["result"]["data"].as_array() {
+            candidate_subs.extend(flat_list.iter().cloned());
+        }
+
+        for sub in candidate_subs {
+            let candidate = sub
+                .get("sub_id")
+                .or_else(|| sub.get("id"))
+                .and_then(|v| {
+                    v.as_str()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .or_else(|| v.as_i64())
+                });
+            if candidate != Some(sub_id) {
+                continue;
+            }
+
+            let content_value = sub.get("content").cloned().unwrap_or(Value::Null);
+            let content_json = if content_value.is_object() {
+                content_value
+            } else if let Some(content_str) = content_value.as_str() {
+                serde_json::from_str(content_str)
+                    .map_err(|err| anyhow!("parse sub content failed: {}", err))?
+            } else {
+                Value::Null
+            };
+
+            if let Some(url) = content_json
+                .get("trans_socket_url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+            {
+                return Ok(url);
+            }
+        }
+
+        Err(anyhow!("trans_socket_url not found for sub_id {}", sub_id))
+    }
+
+    fn normalize_live_ws_url(trans_socket_url: &str) -> String {
+        let mut ws_url = trans_socket_url.trim().to_string();
+        if ws_url.starts_with("https://") {
+            ws_url = ws_url.replacen("https://", "wss://", 1);
+        } else if ws_url.starts_with("http://") {
+            ws_url = ws_url.replacen("http://", "wss://", 1);
+        } else if ws_url.starts_with("ws://") {
+            ws_url = ws_url.replacen("ws://", "wss://", 1);
+        }
+
+        if !ws_url.ends_with("/glue/ws") {
+            ws_url = ws_url.trim_end_matches('/').to_string();
+            ws_url.push_str("/glue/ws");
+        }
+        ws_url
+    }
+
+    fn parse_live_line(value: &Value) -> Option<LiveTranscriptLine> {
+        let source_text = value
+            .get("sourcetext")
+            .or_else(|| value.get("source_text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let trans_text = value
+            .get("transtext")
+            .or_else(|| value.get("trans_text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        if source_text.is_empty() && trans_text.is_empty() {
+            return None;
+        }
+
+        let text_begin_time = value.get("text_begin_time").and_then(|v| v.as_i64());
+        let text_end_time = value.get("text_end_time").and_then(|v| v.as_i64());
+        let end_time = value.get("end_time").and_then(|v| v.as_i64());
+
+        let received_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::from_millis(0))
+            .as_millis() as u64;
+
+        Some(LiveTranscriptLine {
+            source_text,
+            trans_text,
+            text_begin_time,
+            text_end_time,
+            end_time,
+            received_at_ms,
+        })
+    }
+
+    async fn parse_live_ws_message(
+        lines: Arc<Mutex<Vec<LiveTranscriptLine>>>,
+        dedup_keys: Arc<Mutex<HashMap<String, ()>>>,
+        text: &str,
+    ) {
+        let payload = if let Some(rest) = text.strip_prefix("cd1&m") {
+            rest
+        } else {
+            return;
+        };
+
+        let json: Value = match serde_json::from_str(payload) {
+            std::result::Result::Ok(value) => value,
+            std::result::Result::Err(_) => return,
+        };
+
+        let mut candidates = Vec::new();
+        if json.is_object() {
+            candidates.push(json.clone());
+        }
+        if let Some(arr) = json.get("list").and_then(|v| v.as_array()) {
+            candidates.extend(arr.iter().cloned());
+        }
+
+        if candidates.is_empty() {
+            return;
+        }
+
+        let mut lines_lock = lines.lock().await;
+        let mut dedup_lock = dedup_keys.lock().await;
+        for candidate in candidates {
+            let Some(line) = Self::parse_live_line(&candidate) else {
+                continue;
+            };
+            let dedup_key = format!(
+                "{:?}|{:?}|{}|{}",
+                line.text_begin_time, line.text_end_time, line.source_text, line.trans_text
+            );
+            if dedup_lock.contains_key(&dedup_key) {
+                continue;
+            }
+            dedup_lock.insert(dedup_key, ());
+            lines_lock.push(line);
+        }
+    }
+
+    pub async fn start_live_transcript_capture(
+        &self,
+        course_id: i64,
+        sub_id: i64,
+    ) -> Result<LiveTranscriptSessionStatus> {
+        if !self.have_login {
+            return Err(anyhow!("Not login"));
+        }
+
+        let existing_lines = {
+            let mut store = self.live_transcript_store.lock().await;
+            if let Some(existing) = store.sessions.remove(&sub_id) {
+                existing.task.abort();
+                Some(existing.lines)
+            } else {
+                None
+            }
+        };
+
+        {
+            let mut store = self.live_transcript_store.lock().await;
+            if let Some(task) = store.auto_tasks.remove(&sub_id) {
+                task.abort();
+            }
+        }
+
+        let trans_socket_url = self.get_trans_socket_url(course_id, sub_id).await?;
+        let ws_url = Self::normalize_live_ws_url(&trans_socket_url);
+
+        let lines = existing_lines.unwrap_or_else(|| Arc::new(Mutex::new(Vec::new())));
+        let dedup_keys = Arc::new(Mutex::new(HashMap::new()));
+
+        {
+            let lines_snapshot = lines.lock().await.clone();
+            let mut dedup_lock = dedup_keys.lock().await;
+            for line in &lines_snapshot {
+                let dedup_key = format!(
+                    "{:?}|{:?}|{}|{}",
+                    line.text_begin_time, line.text_end_time, line.source_text, line.trans_text
+                );
+                dedup_lock.insert(dedup_key, ());
+            }
+        }
+
+        let ws_url_clone = ws_url.clone();
+        let mut ws_request = ws_url_clone
+            .clone()
+            .into_client_request()
+            .map_err(|err| anyhow!("invalid ws url {}: {}", ws_url_clone, err))?;
+        ws_request.headers_mut().insert(
+            "Origin",
+            "https://classroom.zju.edu.cn".parse().unwrap(),
+        );
+        ws_request.headers_mut().insert(
+            USER_AGENT,
+            "Mozilla/5.0 (X11; Linux x86_64; rv:88.0) Gecko/20100101 Firefox/88.0"
+                .parse()
+                .unwrap(),
+        );
+
+        let (stream, _) = connect_async(ws_request).await.map_err(|err| {
+            anyhow!(
+                "live transcript ws connect failed: {} ({})",
+                ws_url_clone,
+                err
+            )
+        })?;
+
+        let lines_clone = Arc::clone(&lines);
+        let dedup_clone = Arc::clone(&dedup_keys);
+        let task = tokio::spawn(async move {
+            let (mut write, mut read) = stream.split();
+            if write
+                .send(Message::Text("in{\"version\":\"1.9.1\"}".to_string().into()))
+                .await
+                .is_err()
+            {
+                info!("live transcript ws init failed: {}", ws_url_clone);
+                return;
+            }
+
+            let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+            let _ = heartbeat.tick().await;
+
+            loop {
+                tokio::select! {
+                    maybe_msg = read.next() => {
+                        let Some(msg) = maybe_msg else {
+                            break;
+                        };
+                        let msg = match msg {
+                            std::result::Result::Ok(value) => value,
+                            std::result::Result::Err(_) => break,
+                        };
+                        match msg {
+                            Message::Text(text) => {
+                                Self::parse_live_ws_message(
+                                    Arc::clone(&lines_clone),
+                                    Arc::clone(&dedup_clone),
+                                    &text,
+                                )
+                                .await;
+                            }
+                            Message::Binary(_) => {}
+                            Message::Close(_) => break,
+                            Message::Ping(_) => {}
+                            Message::Pong(_) => {}
+                            Message::Frame(_) => {}
+                        }
+                    }
+                    _ = heartbeat.tick() => {
+                        if write.send(Message::Text("po".to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        let started_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::from_millis(0))
+            .as_millis() as u64;
+
+        let session = LiveTranscriptSession {
+            course_id,
+            sub_id,
+            ws_url: ws_url.clone(),
+            started_at_ms,
+            lines,
+            task,
+        };
+
+        let mut store = self.live_transcript_store.lock().await;
+        store.sessions.insert(sub_id, session);
+
+        Ok(LiveTranscriptSessionStatus {
+            course_id,
+            sub_id,
+            ws_url,
+            started_at_ms,
+            line_count: 0,
+            is_running: true,
+        })
+    }
+
+    pub async fn schedule_live_transcript_capture_at(
+        &self,
+        course_id: i64,
+        sub_id: i64,
+        start_at: i64,
+    ) -> Result<()> {
+        if !self.have_login {
+            return Err(anyhow!("Not login"));
+        }
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::from_secs(0))
+            .as_secs() as i64;
+
+        if start_at <= now + 2 {
+            let _ = self.start_live_transcript_capture(course_id, sub_id).await;
+            return Ok(());
+        }
+
+        {
+            let store = self.live_transcript_store.lock().await;
+            if store.sessions.contains_key(&sub_id) || store.auto_tasks.contains_key(&sub_id) {
+                return Ok(());
+            }
+        }
+
+        let delay_secs = (start_at - now) as u64;
+        let assist = self.clone();
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+            let _ = assist.start_live_transcript_capture(course_id, sub_id).await;
+            let mut store = assist.live_transcript_store.lock().await;
+            store.auto_tasks.remove(&sub_id);
+        });
+
+        let mut store = self.live_transcript_store.lock().await;
+        store.auto_tasks.insert(sub_id, task);
+        Ok(())
+    }
+
+    pub async fn cancel_scheduled_live_transcript_capture(&self, sub_id: i64) -> Result<()> {
+        let mut store = self.live_transcript_store.lock().await;
+        let Some(task) = store.auto_tasks.remove(&sub_id) else {
+            return Err(anyhow!("Scheduled task not found for sub_id {}", sub_id));
+        };
+        task.abort();
+        Ok(())
+    }
+
+    pub async fn stop_live_transcript_capture(&self, sub_id: i64) -> Result<()> {
+        let mut store = self.live_transcript_store.lock().await;
+        let Some(session) = store.sessions.get_mut(&sub_id) else {
+            return Err(anyhow!("Live transcript session not found for sub_id {}", sub_id));
+        };
+        session.task.abort();
+        Ok(())
+    }
+
+    pub async fn clear_live_transcript_session(&self, sub_id: i64) -> Result<()> {
+        let mut store = self.live_transcript_store.lock().await;
+        if let Some(task) = store.auto_tasks.remove(&sub_id) {
+            task.abort();
+        }
+        let Some(session) = store.sessions.remove(&sub_id) else {
+            return Err(anyhow!("Live transcript session not found for sub_id {}", sub_id));
+        };
+        session.task.abort();
+        Ok(())
+    }
+
+    pub async fn get_live_transcript_lines(&self, sub_id: i64) -> Result<Vec<LiveTranscriptLine>> {
+        let lines_arc = {
+            let store = self.live_transcript_store.lock().await;
+            let session = store
+                .sessions
+                .get(&sub_id)
+                .ok_or(anyhow!("Live transcript session not found for sub_id {}", sub_id))?;
+            Arc::clone(&session.lines)
+        };
+        let lines = lines_arc.lock().await;
+        Ok(lines.clone())
+    }
+
+    pub async fn get_live_transcript_sessions(&self) -> Vec<LiveTranscriptSessionStatus> {
+        let snapshots = {
+            let store = self.live_transcript_store.lock().await;
+            let mut data = Vec::new();
+            for session in store.sessions.values() {
+                data.push((
+                    session.course_id,
+                    session.sub_id,
+                    session.ws_url.clone(),
+                    session.started_at_ms,
+                    Arc::clone(&session.lines),
+                    session.task.is_finished(),
+                ));
+            }
+            data
+        };
+
+        let mut result = Vec::new();
+        for (course_id, sub_id, ws_url, started_at_ms, lines_arc, is_finished) in snapshots {
+            let line_count = lines_arc.lock().await.len();
+            result.push(LiveTranscriptSessionStatus {
+                course_id,
+                sub_id,
+                ws_url,
+                started_at_ms,
+                line_count,
+                is_running: !is_finished,
+            });
+        }
+        result
+    }
+
+    pub async fn export_live_transcript_text(
+        &self,
+        sub_id: i64,
+        include_original: bool,
+        with_timestamps: bool,
+    ) -> Result<String> {
+        let lines = self.get_live_transcript_lines(sub_id).await?;
+        let mut chunks = Vec::new();
+        for line in lines {
+            let mut row = String::new();
+            if with_timestamps {
+                let begin = line
+                    .text_begin_time
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                let end = line
+                    .text_end_time
+                    .or(line.end_time)
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                row.push_str(&format!("[{}-{}] ", begin, end));
+            }
+            if include_original && !line.source_text.is_empty() {
+                row.push_str(&line.source_text);
+                row.push('\n');
+            }
+            if !line.trans_text.is_empty() {
+                row.push_str(&line.trans_text);
+            }
+            if row.trim().is_empty() {
+                continue;
+            }
+            chunks.push(row);
+        }
+        Ok(chunks.join("\n"))
+    }
+
+    pub async fn backfill_live_transcript_from_history(&self, sub_id: i64) -> Result<usize> {
+        let subtitle = self.get_subtitle(sub_id).await?;
+        let session_arcs = {
+            let store = self.live_transcript_store.lock().await;
+            let session = store
+                .sessions
+                .get(&sub_id)
+                .ok_or(anyhow!("Live transcript session not found for sub_id {}", sub_id))?;
+            (Arc::clone(&session.lines),)
+        };
+        let (lines_arc,) = session_arcs;
+
+        let mut lines_lock = lines_arc.lock().await;
+        let mut existing = HashMap::new();
+        for line in &*lines_lock {
+            let key = format!(
+                "{:?}|{:?}|{}|{}",
+                line.text_begin_time, line.text_end_time, line.source_text, line.trans_text
+            );
+            existing.insert(key, ());
+        }
+
+        let mut inserted = 0usize;
+        for item in subtitle {
+            let line = LiveTranscriptLine {
+                source_text: item.text.trim().to_string(),
+                trans_text: item.trans_text.trim().to_string(),
+                text_begin_time: Some(item.begin_sec as i64),
+                text_end_time: Some(item.end_sec as i64),
+                end_time: Some(item.end_sec as i64),
+                received_at_ms: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or(Duration::from_millis(0))
+                    .as_millis() as u64,
+            };
+
+            if line.source_text.is_empty() && line.trans_text.is_empty() {
+                continue;
+            }
+            let dedup_key = format!(
+                "{:?}|{:?}|{}|{}",
+                line.text_begin_time, line.text_end_time, line.source_text, line.trans_text
+            );
+            if existing.contains_key(&dedup_key) {
+                continue;
+            }
+            existing.insert(dedup_key, ());
+            lines_lock.push(line);
+            inserted += 1;
+        }
+
+        Ok(inserted)
     }
 
     pub async fn get_subtitle(&self, sub_id: i64) -> Result<Vec<SubtitleContent>> {

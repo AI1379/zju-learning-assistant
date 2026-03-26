@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct Config {
     pub save_path: String,
     pub to_pdf: bool,
@@ -29,6 +30,9 @@ pub struct Config {
     pub llm_temperature: f64,
     pub llm_prompt: String,
     pub llm_hide_think_tag: bool,
+
+    pub show_live_capture_controls: bool,
+    pub live_capture_auto_start: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -61,6 +65,30 @@ pub struct Subject {
     pub lecturer_name: String,
     pub path: String, // actual save path is path + sub_name
     pub ppt_image_urls: Vec<String>,
+    pub start_at: Option<i64>,
+    pub room: Option<String>,
+    pub tenant_code: Option<String>,
+    pub sub_public: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LiveTranscriptLine {
+    pub source_text: String,
+    pub trans_text: String,
+    pub text_begin_time: Option<i64>,
+    pub text_end_time: Option<i64>,
+    pub end_time: Option<i64>,
+    pub received_at_ms: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LiveTranscriptSessionStatus {
+    pub course_id: i64,
+    pub sub_id: i64,
+    pub ws_url: String,
+    pub started_at_ms: u64,
+    pub line_count: usize,
+    pub is_running: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
