@@ -13,7 +13,7 @@ mod zju_assist;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -58,7 +58,11 @@ enum Commands {
         save_password: bool,
     },
     /// List pending todo items
-    Todo,
+    Todo {
+        /// Output as structured JSON.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// List my courses
     Courses,
     /// List my classroom (Zhiyun Classroom) courses.
@@ -136,6 +140,15 @@ enum Commands {
         #[arg(short, long)]
         path: Option<String>,
     },
+    /// Query and export course scores (grades).
+    Score {
+        /// Export to file. If omitted, prints table to stdout.
+        #[arg(short, long)]
+        export: Option<String>,
+        /// Output format: table, csv, or auto (inferred from file extension).
+        #[arg(short, long, default_value = "auto")]
+        format: ScoreOutputFormat,
+    },
     /// Capture classroom live interpretation and stream to stdout.
     LiveCapture {
         /// Classroom course id (Zhiyun Classroom course id).
@@ -162,6 +175,14 @@ enum Commands {
 enum LiveCaptureOutputFormat {
     Text,
     Jsonl,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+enum ScoreOutputFormat {
+    Table,
+    Csv,
+    Json,
+    Auto,
 }
 
 #[derive(Subcommand)]
@@ -856,6 +877,81 @@ fn select_upload(
     }
 }
 
+fn csv_escape(field: &str) -> String {
+    if field.contains(',') || field.contains('"') || field.contains('\n') {
+        format!("\"{}\"", field.replace('"', "\"\""))
+    } else {
+        field.to_string()
+    }
+}
+
+fn format_score_table(scores: &[Value]) -> (f64, f64) {
+    let mut total_gp = 0.0_f64;
+    let mut total_credit = 0.0_f64;
+    for item in scores {
+        let cj = item["cj"].as_str().unwrap_or("");
+        if cj != "合格" && cj != "不合格" && cj != "弃修" {
+            let jd: f64 = item["jd"].as_str().and_then(|s: &str| s.parse().ok()).unwrap_or(0.0);
+            let xf: f64 = item["xf"].as_str().and_then(|s: &str| s.parse().ok()).unwrap_or(0.0);
+            total_gp += jd * xf;
+            total_credit += xf;
+        }
+    }
+
+    println!(
+        "共 {} 条记录，总绩点 {:.2}，总学分 {:.2}",
+        scores.len(),
+        if total_credit == 0.0 {
+            0.0
+        } else {
+            total_gp / total_credit
+        },
+        total_credit
+    );
+    println!();
+    println!(
+        "{:<20} {:<30} {:<8} {:<8} {:<8} {:<8}",
+        "选课课号", "课程名称", "成绩", "学分", "绩点", "补考成绩"
+    );
+    for item in scores {
+        let xkkh = item["xkkh"].as_str().unwrap_or("");
+        let kcmc = item["kcmc"].as_str().unwrap_or("");
+        let cj = item["cj"].as_str().unwrap_or("");
+        let xf = item["xf"].as_str().unwrap_or("");
+        let jd = item["jd"].as_str().unwrap_or("");
+        let bkcj = item["bkcj"].as_str().unwrap_or("");
+        println!(
+            "{:<20} {:<30} {:<8} {:<8} {:<8} {:<8}",
+            xkkh, kcmc, cj, xf, jd, bkcj
+        );
+    }
+
+    (total_gp, total_credit)
+}
+
+fn format_score_csv(scores: &[Value]) -> String {
+    let mut out = String::from("\u{FEFF}"); // UTF-8 BOM for Excel
+    out.push_str("选课课号,课程名称,成绩,学分,绩点,补考成绩\n");
+    for item in scores {
+        let xkkh = item["xkkh"].as_str().unwrap_or("");
+        let kcmc = item["kcmc"].as_str().unwrap_or("");
+        let cj = item["cj"].as_str().unwrap_or("");
+        let xf = item["xf"].as_str().unwrap_or("");
+        let jd = item["jd"].as_str().unwrap_or("");
+        let bkcj = item["bkcj"].as_str().unwrap_or("");
+        out.push_str(&format!(
+            "{},{},{},{},{},{}\n",
+            csv_escape(xkkh),
+            csv_escape(kcmc),
+            csv_escape(cj),
+            csv_escape(xf),
+            csv_escape(jd),
+            csv_escape(bkcj)
+        ));
+    }
+    out
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -933,16 +1029,21 @@ async fn main() -> Result<()> {
                 println!("Password not saved. Use ZLA_PASSWORD env or login again next time.");
             }
         }
-        Commands::Todo => {
+        Commands::Todo { json } => {
             let config = load_cli_config()?;
             let assist = get_assist_with_session(&config).await?;
             let todos = assist.get_todo_list().await?;
-            println!("{:<10} {:<30} {:<20}", "ID", "Title", "Deadline");
-            for todo in todos {
-                let id = todo["id"].as_i64().unwrap_or(0);
-                let title = todo["title"].as_str().unwrap_or("Unknown");
-                let end_time = todo["end_time"].as_str().unwrap_or("No deadline");
-                println!("{:<10} {:<30} {:<20}", id, title, end_time);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&todos)?);
+            } else {
+                println!("{:<10} {:<30} {:<20} {:<20}", "ID", "Title", "Course", "Deadline");
+                for todo in todos {
+                    let id = todo["id"].as_i64().unwrap_or(0);
+                    let title = todo["title"].as_str().unwrap_or("Unknown");
+                    let course_name = todo["course_name"].as_str().unwrap_or("Unknown");
+                    let end_time = todo["end_time"].as_str().unwrap_or("No deadline");
+                    println!("{:<10} {:<30} {:<20} {:<20}", id, title, course_name, end_time);
+                }
             }
         }
         Commands::Courses => {
@@ -1160,6 +1261,47 @@ async fn main() -> Result<()> {
                 )
                 .await?;
                 println!("Done {} - {}", sub.course_name, sub.sub_name);
+            }
+        }
+        Commands::Score { export, format } => {
+            let config = load_cli_config()?;
+            let mut assist = get_assist_with_session(&config).await?;
+            let scores = assist.get_score().await?;
+
+            let resolved_format = match format {
+                ScoreOutputFormat::Auto => match export {
+                    Some(ref p) if p.to_lowercase().ends_with(".csv") => ScoreOutputFormat::Csv,
+                    Some(ref p) if p.to_lowercase().ends_with(".json") => ScoreOutputFormat::Json,
+                    _ => ScoreOutputFormat::Table,
+                },
+                other => other,
+            };
+
+            match resolved_format {
+                ScoreOutputFormat::Csv => {
+                    let csv = format_score_csv(&scores);
+                    match export {
+                        Some(ref path) => {
+                            std::fs::write(path, csv)?;
+                            println!("Exported {} records to {}", scores.len(), path);
+                        }
+                        None => print!("{}", csv),
+                    }
+                }
+                ScoreOutputFormat::Json => {
+                    let json = serde_json::to_string_pretty(&scores)?;
+                    match export {
+                        Some(ref path) => {
+                            std::fs::write(path, &json)?;
+                            println!("Exported {} records to {}", scores.len(), path);
+                        }
+                        None => println!("{}", json),
+                    }
+                }
+                ScoreOutputFormat::Table => {
+                    format_score_table(&scores);
+                }
+                ScoreOutputFormat::Auto => unreachable!(),
             }
         }
         Commands::LiveCapture {

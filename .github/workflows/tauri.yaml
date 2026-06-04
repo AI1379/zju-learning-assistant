@@ -68,7 +68,8 @@ jobs:
 
   build-cli:
     permissions:
-      contents: read
+      contents: write
+    needs: publish-tauri
     strategy:
       fail-fast: false
       matrix:
@@ -94,11 +95,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-          cache: 'npm'
+      - name: install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -110,9 +111,6 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      - name: install frontend dependencies
-        run: npm install
-
       - name: build cli
         run: cargo build --manifest-path src-tauri/Cargo.toml --bin zju-assist-cli --features cli --no-default-features --release --target ${{ matrix.target }}
 
@@ -121,3 +119,11 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.binary_path }}
+
+      - name: upload cli to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ${{ matrix.binary_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.TAURI_GITHUB_TOKEN }}
