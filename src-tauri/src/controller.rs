@@ -13,18 +13,18 @@ use log::{debug, info};
 use percent_encoding::percent_decode_str;
 use regex::Regex;
 use serde_json::{json, Value};
-use std::cmp::min;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use std::{path::Path, process::Command, sync::Arc};
 #[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::path::BaseDirectory;
-use tauri::utils::config;
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
+#[cfg(not(desktop))]
 use tauri_plugin_shell::ShellExt;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -397,9 +397,9 @@ pub fn export_todo(
     info!("export_todo to {}", location);
 
     if location == "help" {
-        let res = handle.shell().open(
+        let res = handle.opener().open_url(
             "https://github.com/PeiPei233/zju-learning-assistant?tab=readme-ov-file#导出学在浙大待办事项",
-            None,
+            None::<&str>,
         )
         .map_err(|err| err.to_string());
         if let Err(err) = res {
@@ -910,8 +910,8 @@ pub async fn start_download_upload(
                     )
                     .unwrap();
                 info!(
-                    "download_upload: fail {} {} {} {}",
-                    upload.id, upload.reference_id, upload.file_name, upload.path
+                    "download_upload: fail {} {} {} {}: {}",
+                    upload.id, upload.reference_id, upload.file_name, upload.path, err
                 );
                 // clean up
                 let res = tokio::fs::remove_file(&filepath.clone())
@@ -1031,6 +1031,9 @@ pub fn cancel_download(
 
 #[tauri::command]
 pub fn open_file(handle: AppHandle, path: String, folder: bool) -> Result<(), String> {
+    #[cfg(desktop)]
+    let _ = &handle;
+
     info!("open_file: {} {}", path, folder);
     if Path::new(&path).exists() {
         if folder {

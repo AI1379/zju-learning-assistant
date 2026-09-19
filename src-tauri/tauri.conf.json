@@ -1,5 +1,5 @@
 {
-  "$schema": "https://schema.tauri.app/config/2.0.0-rc",
+  "$schema": "https://schema.tauri.app/config/2",
   "build": {
     "beforeBuildCommand": "pnpm run build",
     "beforeDevCommand": "pnpm run dev",
@@ -55,7 +55,7 @@
   },
   "productName": "zju-learning-assistant",
   "mainBinaryName": "zju-learning-assistant",
-  "version": "0.3.12",
+  "version": "0.3.14",
   "identifier": "zju-learning-assistant",
   "plugins": {
     "cli": {

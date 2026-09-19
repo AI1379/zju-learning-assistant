@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub save_path: String,
     pub to_pdf: bool,
     pub auto_download: bool,
+    pub excluded_upload_extensions: Vec<String>,
     pub ding_url: String,
     pub auto_open_download_list: bool,
     pub tray: bool,
@@ -33,6 +34,45 @@ pub struct Config {
 
     pub show_live_capture_controls: bool,
     pub live_capture_auto_start: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            save_path: "Downloads".to_string(),
+            to_pdf: true,
+            auto_download: true,
+            excluded_upload_extensions: Vec::new(),
+            ding_url: String::new(),
+            auto_open_download_list: true,
+            tray: true,
+            max_concurrent_tasks: 3,
+            auto_start: false,
+
+            mail_notifications: false,
+            smtp_host: String::new(),
+            smtp_port: 465,
+            smtp_username: String::new(),
+            smtp_password: String::new(),
+            mail_recipient: String::new(),
+
+            download_subtitle: false,
+            subtitle_language: vec!["zh".to_string()],
+            subtitle_format: "srt".to_string(),
+            subtitle_with_timestamps: true,
+
+            llm_enabled: false,
+            llm_api_base: String::new(),
+            llm_api_key: String::new(),
+            llm_model: String::new(),
+            llm_temperature: 0.2,
+            llm_prompt: "你是一个专业的课程助教。请根据提供的课程字幕内容，总结课程的核心知识点、重点和难点。输出格式要求清晰、结构化，使用 Markdown 格式。".to_string(),
+            llm_hide_think_tag: true,
+
+            show_live_capture_controls: true,
+            live_capture_auto_start: false,
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

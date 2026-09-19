@@ -17,7 +17,7 @@ use tauri::{Emitter, Manager};
 #[cfg(desktop)]
 use tauri_plugin_cli::CliExt;
 use tauri_plugin_log::{Target, TargetKind};
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
 use zju_assist::ZjuAssist;
 
@@ -27,6 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_cli::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -86,38 +87,7 @@ pub fn run() {
                 )?;
             }
 
-            let mut config = model::Config {
-                save_path: "Downloads".to_string(),
-                to_pdf: true,
-                auto_download: true,
-                ding_url: "".to_string(),
-                auto_open_download_list: true,
-                tray: true,
-                max_concurrent_tasks: 3,
-                auto_start: false,
-                mail_notifications: false,
-                smtp_host: "".to_string(),
-                smtp_port: 465,
-                smtp_username: "".to_string(),
-                smtp_password: "".to_string(),
-                mail_recipient: "".to_string(),
-
-                download_subtitle: false,
-                subtitle_language: vec!["zh".to_string()],
-                subtitle_format: "srt".to_string(),
-                subtitle_with_timestamps: true,
-
-                llm_enabled: false,
-                llm_api_base: "".to_string(), // 默认为空
-                llm_api_key: "".to_string(),
-                llm_model: "".to_string(),    // 默认为空
-                llm_temperature: 0.2,
-                llm_prompt: "你是一个专业的课程助教。请根据提供的课程字幕内容，总结课程的核心知识点、重点和难点。输出格式要求清晰、结构化，使用 Markdown 格式。".to_string(), 
-                llm_hide_think_tag: true,
-
-                show_live_capture_controls: true,
-                live_capture_auto_start: false,
-            };
+            let mut config = model::Config::default();
 
             #[cfg(desktop)]
             {
@@ -231,7 +201,7 @@ pub fn run() {
                         "https://courses.zju.edu.cn/course/{}/learning-activity#/{}?view=scores",
                         course_id, id
                     );
-                    if let Err(e) = app.shell().open(url, None) {
+                    if let Err(e) = app.opener().open_url(url, None::<&str>) {
                         info!("Failed to open url: {}", e);
                     }
                 }

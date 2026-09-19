@@ -158,6 +158,12 @@ impl ZjuRequestBuilder {
         self
     }
 
+    pub fn json<T: Serialize + ?Sized>(&mut self, json: &T) -> &mut Self {
+        self.request_builder_first = self.request_builder_first.try_clone().unwrap().json(json);
+        self.request_builder_second = self.request_builder_second.try_clone().unwrap().json(json);
+        self
+    }
+
     pub async fn send(&self) -> Result<Response, Error> {
         // total 6 retries, 3 with proxy, 3 without proxy
         let mut res = self.request_builder_first.try_clone().unwrap().send().await;
@@ -412,23 +418,42 @@ impl ZjuAssist {
         if !self.have_login {
             return Err(anyhow!("Not login"));
         }
+
         let mut courses = Vec::new();
-        let res = self.get("https://courses.zju.edu.cn/api/my-courses?conditions=%7B%22status%22:%5B%22ongoing%22,%22notStarted%22%5D,%22keyword%22:%22%22,%22classify_type%22:%22recently_started%22,%22display_studio_list%22:false%7D&fields=id,name,course_code,department(id,name),grade(id,name),klass(id,name),course_type,cover,small_cover,start_date,end_date,is_started,is_closed,academic_year_id,semester_id,credit,compulsory,second_name,display_name,created_user(id,name),org(is_enterprise_or_organization),org_id,public_scope,audit_status,audit_remark,can_withdraw_course,imported_from,allow_clone,is_instructor,is_team_teaching,is_default_course_cover,instructors(id,name,email,avatar_small_url),course_attributes(teaching_class_name,is_during_publish_period,copy_status,tip,data),user_stick_course_record(id),classroom_schedule&page=1&page_size=100&showScorePassedStatus=false")
-            .send()
-            .await?;
+        let mut page = 1;
+        loop {
+            let payload = serde_json::json!({
+                "fields": "id,name,course_code,department(id,name),grade(id,name),klass(id,name),course_type,cover,small_cover,start_date,end_date,is_started,is_closed,academic_year_id,semester_id,credit,compulsory,second_name,display_name,created_user(id,name),org(is_enterprise_or_organization),org_id,public_scope,audit_status,audit_remark,can_withdraw_course,imported_from,allow_clone,is_instructor,is_team_teaching,is_default_course_cover,archived,instructors(id,name,email,avatar_small_url),course_attributes(teaching_class_name,is_during_publish_period,copy_status,tip,data,audience_type,graduate_method),user_stick_course_record(id),classroom_schedule",
+                "page": page,
+                "page_size": 100,
+                "conditions": {
+                    "status": ["ongoing", "notStarted", "closed"],
+                    "keyword": "",
+                    "classify_type": "recently_started",
+                    "display_studio_list": false
+                },
+                "showScorePassedStatus": false
+            });
+            let res = self
+                .post("https://courses.zju.edu.cn/api/my-courses")
+                .json(&payload)
+                .send()
+                .await?;
+            let json: Value = res.json().await?;
+            let page_courses = json["courses"]
+                .as_array()
+                .ok_or_else(|| anyhow!("Courses not found in my-courses response"))?;
+            let pages = json["pages"]
+                .as_i64()
+                .ok_or_else(|| anyhow!("Pages not found in my-courses response"))?;
 
-        let json: Value = res.json().await?;
-        courses.extend(json["courses"].as_array().unwrap().iter().cloned());
-        if json["pages"].as_i64().unwrap() > 1 {
-            for page in 2..=json["pages"].as_i64().unwrap() {
-                let res = self.get(format!("https://courses.zju.edu.cn/api/my-courses?conditions=%7B%22status%22:%5B%22ongoing%22,%22notStarted%22%5D,%22keyword%22:%22%22,%22classify_type%22:%22recently_started%22,%22display_studio_list%22:false%7D&fields=id,name,course_code,department(id,name),grade(id,name),klass(id,name),course_type,cover,small_cover,start_date,end_date,is_started,is_closed,academic_year_id,semester_id,credit,compulsory,second_name,display_name,created_user(id,name),org(is_enterprise_or_organization),org_id,public_scope,audit_status,audit_remark,can_withdraw_course,imported_from,allow_clone,is_instructor,is_team_teaching,is_default_course_cover,instructors(id,name,email,avatar_small_url),course_attributes(teaching_class_name,is_during_publish_period,copy_status,tip,data),user_stick_course_record(id),classroom_schedule&page={}&page_size=100&showScorePassedStatus=false", page))
-                    .send()
-                    .await?;
-
-                let json: Value = res.json().await?;
-                courses.extend(json["courses"].as_array().unwrap().iter().cloned());
+            courses.extend(page_courses.iter().cloned());
+            if page >= pages {
+                break;
             }
+            page += 1;
         }
+
         Ok(courses)
     }
 
@@ -500,7 +525,6 @@ impl ZjuAssist {
             ))
             .send()
             .await?;
-        let mut filename = name.to_string();
         // if the upload is not allowed to download, then get the preview url
         let res = match res.status().is_success() {
             true => res,
@@ -514,7 +538,7 @@ impl ZjuAssist {
             }
         };
         std::fs::create_dir_all(Path::new(path))?;
-        let mut file = File::create(Path::new(path).join(filename))?;
+        let mut file = File::create(Path::new(path).join(name))?;
         let content = res.bytes().await?;
         file.write_all(&content)?;
         Ok(())
