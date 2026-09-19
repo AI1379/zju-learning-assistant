@@ -5,6 +5,8 @@ use chrono::TimeZone;
 mod logic;
 #[path = "model.rs"]
 mod model;
+#[path = "pintia.rs"]
+mod pintia;
 #[path = "utils/mod.rs"]
 mod utils;
 #[path = "zju_assist.rs"]
@@ -1032,17 +1034,66 @@ async fn main() -> Result<()> {
         Commands::Todo { json } => {
             let config = load_cli_config()?;
             let assist = get_assist_with_session(&config).await?;
-            let todos = assist.get_todo_list().await?;
+            let mut todos: Vec<Value> = assist.get_todo_list().await?;
+            for todo in todos.iter_mut() {
+                todo["source"] = json!("zju");
+            }
+            // merge pintia todos when remembered credentials are available
+            let pintia_creds = Entry::new("zju-assist", "pintia-login")
+                .ok()
+                .and_then(|entry| entry.get_password().ok())
+                .and_then(|content| {
+                    let mut parts = content.splitn(2, '\n');
+                    let username = parts.next()?.to_string();
+                    let password = parts.next()?.to_string();
+                    if username.is_empty() || password.is_empty() {
+                        None
+                    } else {
+                        Some((username, password))
+                    }
+                });
+            if let Some((username, password)) = pintia_creds {
+                let mut pintia_assist = pintia::PintiaAssist::new();
+                match pintia_assist.login(&username, &password).await {
+                    Ok(_) => match pintia_assist.get_todos().await {
+                        Ok(items) => todos.extend(items),
+                        Err(err) => eprintln!("# 拼题A待办获取失败: {}", err),
+                    },
+                    Err(err) => eprintln!("# 拼题A登录失败，已跳过拼题A待办: {}", err),
+                }
+            }
+            // items with a deadline first, sorted ascending; no-deadline last
+            todos.sort_by(|a, b| {
+                let a_end = a["end_time"].as_str().unwrap_or("");
+                let b_end = b["end_time"].as_str().unwrap_or("");
+                match (a_end.is_empty(), b_end.is_empty()) {
+                    (true, true) => std::cmp::Ordering::Equal,
+                    (true, false) => std::cmp::Ordering::Greater,
+                    (false, true) => std::cmp::Ordering::Less,
+                    (false, false) => a_end.cmp(b_end),
+                }
+            });
             if json {
                 println!("{}", serde_json::to_string_pretty(&todos)?);
             } else {
-                println!("{:<10} {:<30} {:<20} {:<20}", "ID", "Title", "Course", "Deadline");
+                println!(
+                    "{:<10} {:<8} {:<32} {:<24} {:<24}",
+                    "ID", "Source", "Title", "Course", "Deadline"
+                );
                 for todo in todos {
                     let id = todo["id"].as_i64().unwrap_or(0);
+                    let source = if todo["source"].as_str() == Some("pintia") {
+                        "PTA"
+                    } else {
+                        "学在浙大"
+                    };
                     let title = todo["title"].as_str().unwrap_or("Unknown");
                     let course_name = todo["course_name"].as_str().unwrap_or("Unknown");
                     let end_time = todo["end_time"].as_str().unwrap_or("No deadline");
-                    println!("{:<10} {:<30} {:<20} {:<20}", id, title, course_name, end_time);
+                    println!(
+                        "{:<10} {:<8} {:<32} {:<24} {:<24}",
+                        id, source, title, course_name, end_time
+                    );
                 }
             }
         }
