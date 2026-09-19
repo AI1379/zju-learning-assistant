@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
 use chrono::TimeZone;
 
-#[path = "../logic.rs"]
+#[path = "logic.rs"]
 mod logic;
-#[path = "../model.rs"]
+#[path = "model.rs"]
 mod model;
-#[path = "../utils/mod.rs"]
+#[path = "utils/mod.rs"]
 mod utils;
-#[path = "../zju_assist.rs"]
+#[path = "zju_assist.rs"]
 mod zju_assist;
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
