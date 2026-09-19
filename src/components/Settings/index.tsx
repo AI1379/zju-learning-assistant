@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { App, Drawer, List, Typography, Button, Badge, Switch, Input, Space, InputNumber, Tooltip, Select } from 'antd';
-import { EditOutlined, CheckOutlined, SendOutlined, ArrowLeftOutlined, SettingOutlined } from '@ant-design/icons';
+import { App, Drawer, List, Typography, Button, Badge, Switch, Input, Space, InputNumber, Tooltip, Select, Checkbox, Divider } from 'antd';
+import { EditOutlined, CheckOutlined, SendOutlined, ArrowLeftOutlined, SettingOutlined, LoginOutlined, LogoutOutlined } from '@ant-design/icons';
 import { invoke } from '@tauri-apps/api/core';
 import * as dialog from "@tauri-apps/plugin-dialog";
 import { useConfig } from '../../context/ConfigContext';
@@ -37,6 +37,14 @@ export default function Settings({
   const [subtitleModalOpen, setSubtitleModalOpen] = useState(false);
   const [llmModalOpen, setLlmModalOpen] = useState(false);
   const [isEnablingLlm, setIsEnablingLlm] = useState(false);
+  const [pintiaAccount, setPintiaAccount] = useState<string | null>(null);
+  const [pintiaChecking, setPintiaChecking] = useState(false);
+  const [pintiaUsername, setPintiaUsername] = useState('');
+  const [pintiaPassword, setPintiaPassword] = useState('');
+  const [pintiaCookie, setPintiaCookie] = useState('');
+  const [pintiaRemember, setPintiaRemember] = useState(true);
+  const [pintiaLoggingIn, setPintiaLoggingIn] = useState(false);
+  const [pintiaCookieLoggingIn, setPintiaCookieLoggingIn] = useState(false);
 
   // 当 Drawer 打开或配置更新时，同步钉钉 URL 到输入框
   useEffect(() => {
@@ -49,6 +57,17 @@ export default function Settings({
       setMailRecipientInput(config.mail_recipient || '');
     }
   }, [open, config]);
+
+  // 打开设置时检查拼题A登录状态
+  useEffect(() => {
+    if (open) {
+      setPintiaChecking(true);
+      invoke<string | null>('pintia_check_login')
+        .then((account) => setPintiaAccount(account))
+        .catch(() => setPintiaAccount(null))
+        .finally(() => setPintiaChecking(false));
+    }
+  }, [open]);
 
   const updatePath = () => {
     dialog.open({
@@ -149,6 +168,49 @@ export default function Settings({
       updateConfigField('llm_enabled', false);
       setIsEnablingLlm(false);
     }
+  };
+
+  const handlePintiaLogin = () => {
+    if (!pintiaUsername || !pintiaPassword) {
+      notification.warning({ message: '请输入拼题A账号和密码' });
+      return;
+    }
+    setPintiaLoggingIn(true);
+    invoke<string>('pintia_login', {
+      username: pintiaUsername,
+      password: pintiaPassword,
+      remember: pintiaRemember
+    }).then((account) => {
+      setPintiaAccount(account);
+      setPintiaPassword('');
+      notification.success({ message: `拼题A已登录：${account}` });
+    }).catch((err) => {
+      notification.error({ message: '拼题A登录失败', description: String(err) });
+    }).finally(() => setPintiaLoggingIn(false));
+  };
+
+  const handlePintiaCookieLogin = () => {
+    if (!pintiaCookie.trim()) {
+      notification.warning({ message: '请粘贴 PTASession Cookie' });
+      return;
+    }
+    setPintiaCookieLoggingIn(true);
+    invoke<string>('pintia_login_with_cookie', { cookie: pintiaCookie }).then((account) => {
+      setPintiaAccount(account);
+      setPintiaCookie('');
+      notification.success({ message: '拼题A Cookie 登录成功' });
+    }).catch((err) => {
+      notification.error({ message: '拼题A Cookie 登录失败', description: String(err) });
+    }).finally(() => setPintiaCookieLoggingIn(false));
+  };
+
+  const handlePintiaLogout = () => {
+    invoke('pintia_logout').then(() => {
+      setPintiaAccount(null);
+      notification.success({ message: '拼题A已退出登录' });
+    }).catch((err) => {
+      notification.error({ message: '拼题A退出登录失败', description: String(err) });
+    });
   };
 
   return (
@@ -356,6 +418,88 @@ export default function Settings({
                         <Button type="primary" onClick={handleSaveAndEnableMail}>保存并启用</Button>
                         <Button danger onClick={handleDisableMail}>关闭</Button>
                       </Space>
+                    </Space>
+                  </div>
+                </div>
+              }
+            />
+          </List.Item>
+
+          <List.Item>
+            <List.Item.Meta
+              title={
+                <Space>
+                  <Text style={{ fontWeight: 'normal' }}>拼题A（PTA）作业同步</Text>
+                  {pintiaAccount ? (
+                    <Badge status="success" text={<Text type="secondary" style={{ fontSize: 12 }}>已登录：{pintiaAccount}</Text>} />
+                  ) : (
+                    <Badge status={pintiaChecking ? 'processing' : 'default'} text={
+                      <Text type="secondary" style={{ fontSize: 12 }}>{pintiaChecking ? '检查登录状态中…' : '未登录'}</Text>
+                    } />
+                  )}
+                </Space>
+              }
+              description={
+                <div>
+                  <Text type="secondary" style={{ fontWeight: 'normal', fontSize: 12 }}>
+                    登录拼题A后，待办事项列表会合并显示 PTA 上未截止的作业/考试题集。
+                  </Text>
+                  <div style={{ marginTop: 10 }}>
+                    <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                      <Input
+                        placeholder='拼题A 邮箱 / 手机号'
+                        value={pintiaUsername}
+                        onChange={(e) => setPintiaUsername(e.target.value)}
+                      />
+                      <Space.Compact style={{ width: '100%' }}>
+                        <Input.Password
+                          placeholder='拼题A 密码'
+                          value={pintiaPassword}
+                          onChange={(e) => setPintiaPassword(e.target.value)}
+                          onPressEnter={handlePintiaLogin}
+                        />
+                        <Button
+                          type='primary'
+                          icon={<LoginOutlined />}
+                          loading={pintiaLoggingIn}
+                          onClick={handlePintiaLogin}
+                        >
+                          登录
+                        </Button>
+                        {pintiaAccount && (
+                          <Tooltip title='退出登录'>
+                            <Button danger icon={<LogoutOutlined />} onClick={handlePintiaLogout} />
+                          </Tooltip>
+                        )}
+                      </Space.Compact>
+                      <Checkbox
+                        checked={pintiaRemember}
+                        onChange={(e) => setPintiaRemember(e.target.checked)}
+                        style={{ fontSize: 12 }}
+                      >
+                        记住密码并自动登录
+                      </Checkbox>
+                      <Divider style={{ margin: '4px 0' }} plain>
+                        <Text type="secondary" style={{ fontSize: 12 }}>或</Text>
+                      </Divider>
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                        若登录触发了验证码，可改用 Cookie 登录：在浏览器登录 pintia.cn 后，按 F12 打开开发者工具 → Network → 任选一个请求 → Request Headers → Cookie 中复制 PTASession= 后面的值粘贴到下方。
+                      </Text>
+                      <Space.Compact style={{ width: '100%' }}>
+                        <Input
+                          placeholder='粘贴 PTASession Cookie 值'
+                          value={pintiaCookie}
+                          onChange={(e) => setPintiaCookie(e.target.value)}
+                          onPressEnter={handlePintiaCookieLogin}
+                        />
+                        <Button
+                          icon={<LoginOutlined />}
+                          loading={pintiaCookieLoggingIn}
+                          onClick={handlePintiaCookieLogin}
+                        >
+                          Cookie 登录
+                        </Button>
+                      </Space.Compact>
                     </Space>
                   </div>
                 </div>

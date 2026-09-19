@@ -2,9 +2,10 @@ import React, { useEffect, useState, useRef } from 'react'
 import { App, Menu, Layout, Tooltip, Badge, Typography } from 'antd';
 import { invoke } from '@tauri-apps/api/core'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
-import { LogoutOutlined, DownloadOutlined, SettingOutlined, FileSearchOutlined, CarryOutOutlined } from '@ant-design/icons';
+import { LogoutOutlined, DownloadOutlined, SettingOutlined, FileSearchOutlined, CarryOutOutlined, CodeOutlined } from '@ant-design/icons';
 import Learning from '../Learning'
 import Classroom from '../Classroom'
+import Pintia from '../Pintia'
 import Score from '../Score'
 import Todo from '../Todo'
 import Settings from '../../components/Settings'
@@ -54,6 +55,7 @@ interface TodoItem {
   title: string;
   course_name: string;
   end_time: string;
+  source?: string;
 }
 
 const getDefaultSelectedUploadKeys = (uploads: Upload[], excludedExtensions: readonly string[] = []): React.Key[] => (
@@ -257,7 +259,7 @@ export default function Home({
 
     res.forEach(async (item) => {
       if (item.end_time) {
-        const key = `${item.course_id}-${item.id}-${item.end_time}`
+        const key = `${item.source || 'zju'}-${item.course_id}-${item.id}-${item.end_time}`
         const diffTime = dayjs(item.end_time).diff(dayjs(), 'minute')
         if (!notifiedTodo.current[key] && diffTime <= 60 && diffTime > 0) {
           let permissionGranted = await isPermissionGranted();
@@ -382,6 +384,16 @@ export default function Home({
     invoke<boolean>('check_login').then((res) => {
       if (!res) setIsLogin(false)
     }).catch(() => setIsLogin(false))
+
+    // 拼题A自动登录：会话有效则直接使用，否则尝试记住的账号密码静默重登
+    invoke<string | null>('pintia_check_login').then((account) => {
+      if (account) return
+      return invoke<[string, string]>('pintia_get_auto_login_info').then(([username, password]) => {
+        return invoke<string>('pintia_login', { username, password, remember: true })
+      })
+    }).catch(() => {
+      // 未配置拼题A或自动登录失败（如触发验证码），静默跳过
+    })
 
     // Download list polling is now handled by useDownloadList hook inside components that need it (like DownloadDrawer)
     // We only need the count here, which is provided by useDownloadList() called at the top.
@@ -514,6 +526,9 @@ export default function Home({
             </Tooltip>
           </Menu.Item>
           <Menu.Item key='classroom' icon={<img src={ClassroomIcon} style={{ width: 14 }} alt="classroom" />}>智云课堂</Menu.Item>
+          <Menu.Item key='pintia' icon={<CodeOutlined />}>
+            <span style={{ color: current === 'pintia' ? '#1677ff' : undefined }}>拼题A</span>
+          </Menu.Item>
           <Menu.Item key='score' icon={<FileSearchOutlined />}>
             <Tooltip title={notifyScore ? `成绩提醒正在运行 - 上次同步时间：${lastSyncScore}` : ''}>
               <Badge dot={true} count={notifyScore ? 1 : 0} color='green'>
@@ -560,6 +575,7 @@ export default function Home({
           setCourseList={setCourseList}
         />}
         {current === 'classroom' && <Classroom />}
+        {current === 'pintia' && <Pintia />}
         {current === 'score' && <Score
           notify={notifyScore}
           lastSync={lastSyncScore}

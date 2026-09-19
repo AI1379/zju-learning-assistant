@@ -3,6 +3,7 @@
 mod controller;
 pub mod logic;
 pub mod model;
+pub mod pintia;
 pub mod utils;
 pub mod zju_assist;
 
@@ -19,6 +20,7 @@ use tauri_plugin_cli::CliExt;
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
+use pintia::PintiaAssist;
 use zju_assist::ZjuAssist;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -114,6 +116,7 @@ pub fn run() {
             }
 
             let zju_assist = Arc::new(Mutex::new(ZjuAssist::new()));
+            let pintia_assist = Arc::new(Mutex::new(PintiaAssist::new()));
 
             // get user download path
             if let Ok(download_dir) = app.path().download_dir() {
@@ -133,6 +136,7 @@ pub fn run() {
             let download_states: DashMap<String, Arc<AtomicBool>> = DashMap::new();
 
             app.manage(zju_assist);
+            app.manage(pintia_assist);
             app.manage(config_state);
             app.manage(download_states);
 
@@ -193,6 +197,14 @@ pub fn run() {
                     app.get_webview_window("main").unwrap().set_focus().unwrap();
                 } else if id.starts_with("export-todo-") {
                     app.emit("export-todo", id[12..].to_string()).unwrap();
+                } else if id.starts_with("ptodo-") {
+                    let url = format!(
+                        "https://pintia.cn/problem-sets/{}/exam/problems",
+                        &id[6..]
+                    );
+                    if let Err(e) = app.opener().open_url(url, None::<&str>) {
+                        info!("Failed to open url: {}", e);
+                    }
                 } else if id.starts_with("todo-") {
                     let course_id_id = id.split("-").collect::<Vec<&str>>();
                     let course_id = course_id_id[1];
@@ -286,6 +298,12 @@ pub fn run() {
             controller::set_config,
             controller::test_email_config,
             controller::test_llm_connection,
+            controller::pintia_login,
+            controller::pintia_login_with_cookie,
+            controller::pintia_logout,
+            controller::pintia_check_login,
+            controller::pintia_get_auto_login_info,
+            controller::pintia_get_assignments,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

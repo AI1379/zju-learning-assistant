@@ -13,6 +13,7 @@ interface TodoItem {
   title: string;
   course_name: string;
   end_time: string;
+  source?: string;
 }
 
 interface TodoProps {
@@ -40,6 +41,14 @@ export default function Todo({
       dataIndex: 'course_name',
       key: 'course_name',
       width: '30%',
+      render: (text: string, record: TodoItem) => (
+        <Space>
+          <Tag color={record.source === 'pintia' ? 'geekblue' : 'green'}>
+            {record.source === 'pintia' ? 'PTA' : '学在浙大'}
+          </Tag>
+          {text}
+        </Space>
+      ),
     },
     {
       title: '任务名称',
@@ -49,7 +58,9 @@ export default function Todo({
       render: (text: string, record: TodoItem) => (
         <a
           onClick={() => {
-            const url = `https://courses.zju.edu.cn/course/${record.course_id}/learning-activity#/${record.id}?view=scores`;
+            const url = record.source === 'pintia'
+              ? `https://pintia.cn/problem-sets/${record.id}/exam/problems`
+              : `https://courses.zju.edu.cn/course/${record.course_id}/learning-activity#/${record.id}?view=scores`;
             open(url).catch((err) => {
               notification.error({
                 message: '打开链接失败',
@@ -151,7 +162,7 @@ export default function Todo({
       <Table
         columns={columns}
         dataSource={todos}
-        rowKey={(record) => `${record.course_id}-${record.id}`}
+        rowKey={(record) => `${record.source || 'zju'}-${record.course_id}-${record.id}`}
         pagination={false}
         scroll={{ y: 'calc(100vh - 255px)' }}
         size="small"

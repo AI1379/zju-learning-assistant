@@ -3,6 +3,7 @@ use crate::model::{
     VersionInfo,
 };
 use crate::utils::{export_todo_ics, format_srt_timestamp, images_to_pdf, save_subtitle, send_email};
+use crate::pintia::PintiaAssist;
 use crate::zju_assist::{SubtitleContent, ZjuAssist};
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
@@ -123,6 +124,89 @@ pub fn get_auto_login_info() -> Result<(String, String), String> {
 }
 
 #[tauri::command]
+pub async fn pintia_login(
+    pintia_assist: State<'_, Arc<Mutex<PintiaAssist>>>,
+    username: String,
+    password: String,
+    remember: bool,
+) -> Result<String, String> {
+    info!("pintia_login: {} remember: {}", username, remember);
+    let mut pintia = pintia_assist.lock().await;
+    let account = pintia
+        .login(&username, &password)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if remember {
+        let entry = Entry::new("zju-assist", "pintia-login").map_err(|err| err.to_string())?;
+        entry
+            .set_password(&format!("{}\n{}", username, password))
+            .map_err(|err| err.to_string())?;
+    } else {
+        if let Ok(entry) = Entry::new("zju-assist", "pintia-login") {
+            let _ = entry.delete_password();
+        }
+    }
+
+    Ok(account)
+}
+
+#[tauri::command]
+pub async fn pintia_login_with_cookie(
+    pintia_assist: State<'_, Arc<Mutex<PintiaAssist>>>,
+    cookie: String,
+) -> Result<String, String> {
+    info!("pintia_login_with_cookie");
+    let mut pintia = pintia_assist.lock().await;
+    pintia
+        .login_with_cookie(&cookie)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn pintia_logout(
+    pintia_assist: State<'_, Arc<Mutex<PintiaAssist>>>,
+) -> Result<(), String> {
+    info!("pintia_logout");
+    let mut pintia = pintia_assist.lock().await;
+    pintia.logout();
+    if let Ok(entry) = Entry::new("zju-assist", "pintia-login") {
+        let _ = entry.delete_password();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn pintia_check_login(
+    pintia_assist: State<'_, Arc<Mutex<PintiaAssist>>>,
+) -> Result<Option<String>, String> {
+    info!("pintia_check_login");
+    let mut pintia = pintia_assist.lock().await;
+    pintia.check_login().await.map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn pintia_get_assignments(
+    pintia_assist: State<'_, Arc<Mutex<PintiaAssist>>>,
+) -> Result<Vec<Value>, String> {
+    info!("pintia_get_assignments");
+    let mut pintia = pintia_assist.lock().await;
+    pintia.get_assignments().await.map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn pintia_get_auto_login_info() -> Result<(String, String), String> {
+    info!("pintia_get_auto_login_info");
+    let entry = Entry::new("zju-assist", "pintia-login").map_err(|err| err.to_string())?;
+    let content = entry.get_password().map_err(|err| err.to_string())?;
+    let mut content = content.split('\n');
+    let username = content.next().unwrap_or("").to_string();
+    let password = content.next().unwrap_or("").to_string();
+    Ok((username, password))
+}
+
+#[tauri::command]
 pub async fn check_login(state: State<'_, Arc<Mutex<ZjuAssist>>>) -> Result<bool, String> {
     info!("check_login");
     let zju_assist = state.lock().await;
@@ -190,6 +274,7 @@ pub async fn logout(
 #[tauri::command]
 pub async fn sync_todo_once(
     zju_assist: State<'_, Arc<Mutex<ZjuAssist>>>,
+    pintia_assist: State<'_, Arc<Mutex<PintiaAssist>>>,
     handle: AppHandle,
 ) -> Result<Vec<Value>, String> {
     info!("sync_todo_once");
@@ -198,7 +283,7 @@ pub async fn sync_todo_once(
         .get_todo_list()
         .await
         .map_err(|err| err.to_string())?;
-    let todo_list_no_end_time = todo_list
+    let mut todo_list_no_end_time = todo_list
         .iter()
         .filter(|todo| todo["end_time"].is_null())
         .map(|todo| todo.clone())
@@ -208,6 +293,25 @@ pub async fn sync_todo_once(
         .filter(|todo| !todo["end_time"].is_null())
         .map(|todo| todo.clone())
         .collect::<Vec<_>>();
+
+    // merge pintia assignments; pintia failures never break the zju sync
+    {
+        let mut pintia = pintia_assist.lock().await;
+        if pintia.is_login() {
+            match pintia.get_todos().await {
+                Ok(items) => {
+                    for item in items {
+                        if item["end_time"].is_null() {
+                            todo_list_no_end_time.push(item);
+                        } else {
+                            todo_list_with_end_time.push(item);
+                        }
+                    }
+                }
+                Err(err) => info!("Pintia todo sync skipped: {}", err),
+            }
+        }
+    }
 
     // sort todo list by end_time like 2024-06-06T12:00:00Z
     todo_list_with_end_time.sort_by(|a, b| {
@@ -238,25 +342,31 @@ pub async fn sync_todo_once(
         &PredefinedMenuItem::separator(&handle).map_err(|err| err.to_string())?,
     ])
     .unwrap();
-    if todo_list.len() > 0 {
+    if !todo_list_with_end_time.is_empty() || !todo_list_no_end_time.is_empty() {
         for todo in todo_list_with_end_time.iter() {
             let end_time = todo["end_time"].as_str().unwrap_or("1970-01-01T00:00:00Z");
             let end_time = end_time
                 .parse::<DateTime<Utc>>()
                 .unwrap_or("1970-01-01T00:00:00Z".parse().unwrap())
                 .with_timezone(&Local);
-            let course_id = todo["course_id"].as_i64().unwrap();
-            let id = todo["id"].as_i64().unwrap();
-            let course_name = todo["course_name"].as_str().unwrap();
-            let title = todo["title"].as_str().unwrap();
+            let course_id = todo["course_id"].as_i64().unwrap_or(0);
+            let id = todo["id"].as_i64().unwrap_or(0);
+            let course_name = todo["course_name"].as_str().unwrap_or("");
+            let title = todo["title"].as_str().unwrap_or("");
+            let is_pintia = todo["source"].as_str() == Some("pintia");
 
             let tray_title = format!(
-                "{}  {}-{}",
+                "{}  {}{}-{}",
                 end_time.format("%Y-%m-%d %H:%M:%S"),
+                if is_pintia { "[PTA] " } else { "" },
                 title,
                 course_name
             );
-            let tray_id = format!("todo-{}-{}", course_id, id);
+            let tray_id = if is_pintia {
+                format!("ptodo-{}", id)
+            } else {
+                format!("todo-{}-{}", course_id, id)
+            };
             #[cfg(desktop)]
             menu.append(
                 &MenuItem::with_id(&handle, &tray_id, tray_title, true, None::<&str>)
@@ -265,13 +375,23 @@ pub async fn sync_todo_once(
             .unwrap();
         }
         for todo in todo_list_no_end_time.iter() {
-            let course_id = todo["course_id"].as_i64().unwrap();
-            let id = todo["id"].as_i64().unwrap();
-            let course_name = todo["course_name"].as_str().unwrap();
-            let title = todo["title"].as_str().unwrap();
+            let course_id = todo["course_id"].as_i64().unwrap_or(0);
+            let id = todo["id"].as_i64().unwrap_or(0);
+            let course_name = todo["course_name"].as_str().unwrap_or("");
+            let title = todo["title"].as_str().unwrap_or("");
+            let is_pintia = todo["source"].as_str() == Some("pintia");
 
-            let tray_title = format!("No Deadline  {}-{}", title, course_name);
-            let tray_id = format!("todo-{}-{}", course_id, id);
+            let tray_title = format!(
+                "No Deadline  {}{}-{}",
+                if is_pintia { "[PTA] " } else { "" },
+                title,
+                course_name
+            );
+            let tray_id = if is_pintia {
+                format!("ptodo-{}", id)
+            } else {
+                format!("todo-{}-{}", course_id, id)
+            };
             #[cfg(desktop)]
             menu.append(
                 &MenuItem::with_id(&handle, &tray_id, tray_title, true, None::<&str>)
@@ -384,7 +504,10 @@ pub async fn sync_todo_once(
         .set_menu(Some(menu))
         .unwrap();
 
-    Ok(todo_list)
+    Ok(todo_list_with_end_time
+        .into_iter()
+        .chain(todo_list_no_end_time)
+        .collect())
 }
 
 #[tauri::command]
